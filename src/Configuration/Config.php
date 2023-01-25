@@ -17,4 +17,9 @@ class Config extends BaseConfig
     {
         return $this->getArrayValue(['parameters', 'migrateDatabases']);
     }
+
+    public function getUsers(): array
+    {
+        return $this->getArrayValue(['parameters', 'users']);
+    }
 }
