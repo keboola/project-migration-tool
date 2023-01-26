@@ -27,18 +27,23 @@ class Component extends BaseComponent
         Command::useRole($migrateSnflkConnection, 'ACCOUNTADMIN');
         Command::useRole($destinationSnflkConnection, 'ACCOUNTADMIN');
 
+//        Export grants from source database
+        $userAndRolesGrants = Command::exportGrantsUsersAndRoles($sourceSnflkConnection, $databases);
+
+//        Get main role
+        $mainRole = Command::getMainRole($sourceSnflkConnection, $databases);
+
 //        Cleanup destination account
         Command::cleanupProject($destinationSnflkConnection);
 
-//        Create KEBOOLA_STORAGE role in destination anflk account
+//        Create MainRole in destination anflk account
         Command::createMainRole(
             $destinationSnflkConnection,
+            $mainRole,
             'migrate',
             $this->getConfig()->getUsers()
         );
 
-//        Export grants from source database
-        $userAndRolesGrants = Command::exportGrantsUsersAndRoles($sourceSnflkConnection, $databases);
 //
 //        [
 //            'databases' => $databaseGrants,
@@ -80,7 +85,12 @@ class Component extends BaseComponent
 
 //        create and clone databases from shares
         Command::createDatabasesFromShares($destinationSnflkConnection, $databases, $sourceAccount);
-        Command::cloneDatabaseFromShared($destinationSnflkConnection, $databases, $userAndRolesGrants);
+        Command::cloneDatabaseFromShared(
+            $destinationSnflkConnection,
+            $mainRole,
+            $databases,
+            $userAndRolesGrants
+        );
 
         var_dump($sourceRegion, $destinationRegion);
     }

@@ -25,11 +25,6 @@ class ConfigDefinition extends BaseConfigDefinition
                 ->arrayNode('users')
                     ->ignoreExtraKeys(false)
                 ->end()
-                ->scalarNode('defaultRole')
-                    ->isRequired()
-                    ->cannotBeEmpty()
-                    ->defaultValue(self::DEFAULT_SNFLK_ROLE)
-                ->end()
             ->end()
         ;
         // @formatter:on

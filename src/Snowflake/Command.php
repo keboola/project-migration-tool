@@ -100,8 +100,12 @@ class Command
         }
     }
 
-    public static function cloneDatabaseFromShared(Connection $connection, array $databases, array $grants): void
-    {
+    public static function cloneDatabaseFromShared(
+        Connection $connection,
+        string $mainRole,
+        array $databases,
+        array $grants
+    ): void {
         foreach ($databases as $database) {
             [
                 'databases' => $databaseGrants,
@@ -113,7 +117,7 @@ class Command
                 'other' => $otherGrants,
             ] = Helper::parseGrantsToObjects($grants[$database]);
 
-            self::createRole($connection, ['name' => $database, 'granted_by' => 'KEBOOLA_STORAGE']);
+            self::createRole($connection, ['name' => $database, 'granted_by' => $mainRole]);
             foreach ($accountGrants as $grant) {
                 self::assignGrantToRole($connection, $grant);
             }
@@ -129,7 +133,7 @@ class Command
                 self::assignGrantToRole($connection, $warehouseGrant);
             }
 
-            self::useRole($connection, 'KEBOOLA_STORAGE');
+            self::useRole($connection, $mainRole);
 
             $shareDbName = $database . '_SHARE';
 
@@ -142,7 +146,7 @@ class Command
                 if ($databaseGrant['privilege'] === 'OWNERSHIP') {
                     self::assignGrantToRole(
                         $connection,
-                        array_merge($databaseGrant, ['granted_by' => 'KEBOOLA_STORAGE'])
+                        array_merge($databaseGrant, ['granted_by' => $mainRole])
                     );
                 }
                 self::assignGrantToRole($connection, $databaseGrant);
@@ -360,10 +364,10 @@ class Command
 
     public static function createMainRole(
         Connection $connection,
+        string $mainRole,
         string $warehouse,
         array $users
     ): void {
-        $mainRole = 'KEBOOLA_STORAGE';
         $user = $mainRole;
 
         self::createRole($connection, ['name' => $mainRole]);
@@ -389,7 +393,7 @@ class Command
         ));
 
         $createWarehouseSql = <<<SQL
-'CREATE WAREHOUSE %s WITH WAREHOUSE_SIZE = 'XSMALL' WAREHOUSE_TYPE = 'STANDARD' AUTO_SUSPEND = 300 AUTO_RESUME = TRUE;'
+CREATE WAREHOUSE %s WITH WAREHOUSE_SIZE = 'XSMALL' WAREHOUSE_TYPE = 'STANDARD' AUTO_SUSPEND = 300 AUTO_RESUME = TRUE;
 SQL;
 
         $connection->query(sprintf(
@@ -458,6 +462,7 @@ SQL;
         self::useRole($connection, 'ACCOUNTADMIN');
         $dropRoles = [
             'SAPI_9472',
+            'SAPI_9473',
             'KEBOOLA_STORAGE',
         ];
 
@@ -491,5 +496,27 @@ SQL;
             'grant_option' => 'false',
             'granted_by' => 'ACCOUNTADMIN',
         ]);
+    }
+
+    public static function getMainRole(Connection $connection, array $databases): string
+    {
+        $grantsOfRoles = [];
+        foreach ($databases as $database) {
+            $grantsOfRole = $connection->fetchAll(sprintf(
+                'SHOW GRANTS OF ROLE %s',
+                $database
+            ));
+            $grantedByRole = array_map(fn($v) => $v['granted_by'], $connection->fetchAll(sprintf(
+                'SHOW GRANTS OF ROLE %s',
+                $database
+            )));
+            $grantsOfRoles = array_merge($grantsOfRoles, array_unique($grantedByRole));
+        }
+
+        $uniqueMainRoles = array_unique($grantsOfRoles);
+
+        assert(count($uniqueMainRoles) === 1);
+
+        return current($uniqueMainRoles);
     }
 }
