@@ -117,7 +117,14 @@ class Command
                 'other' => $otherGrants,
             ] = Helper::parseGrantsToObjects($grants[$database]);
 
-            self::createRole($connection, ['name' => $database, 'granted_by' => $mainRole]);
+            self::createRole(
+                $connection,
+                [
+                    'name' => $database,
+                    'granted_by' => $mainRole,
+                    'privilege' => 'OWNERSHIP',
+                ]
+            );
             foreach ($accountGrants as $grant) {
                 self::assignGrantToRole($connection, $grant);
             }
@@ -275,6 +282,8 @@ class Command
 
     public static function createRole(Connection $connection, array $role): void
     {
+        assert($role['privilege'] === 'OWNERSHIP');
+
         if (isset($role['granted_by'])) {
             self::useRole($connection, $role['granted_by']);
         }
@@ -407,7 +416,7 @@ class Command
     ): void {
         $user = $mainRole;
 
-        self::createRole($connection, ['name' => $mainRole]);
+        self::createRole($connection, ['name' => $mainRole, 'privilege' => 'OWNERSHIP']);
 
         $connection->query(sprintf(
             'GRANT CREATE DATABASE ON ACCOUNT TO ROLE %s;',
