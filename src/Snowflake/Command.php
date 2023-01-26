@@ -173,6 +173,12 @@ class Command
                         $validSchema = [
                             sprintf('%s.%s', $database, $schemaName),
                             sprintf('%s.%s', $database, QueryBuilder::quoteIdentifier($schemaName)),
+                            sprintf('%s.%s', QueryBuilder::quoteIdentifier($database), $schemaName),
+                            sprintf(
+                                '%s.%s',
+                                QueryBuilder::quoteIdentifier($database),
+                                QueryBuilder::quoteIdentifier($schemaName)
+                            ),
                         ];
                         return in_array($v['name'], $validSchema);
                     }
@@ -210,6 +216,30 @@ class Command
                                 sprintf(
                                     '%s.%s.%s',
                                     $database,
+                                    QueryBuilder::quoteIdentifier($schemaName),
+                                    QueryBuilder::quoteIdentifier($tableName)
+                                ),
+                                sprintf(
+                                    '%s.%s.%s',
+                                    QueryBuilder::quoteIdentifier($database),
+                                    $schemaName,
+                                    $tableName
+                                ),
+                                sprintf(
+                                    '%s.%s.%s',
+                                    QueryBuilder::quoteIdentifier($database),
+                                    $schemaName,
+                                    QueryBuilder::quoteIdentifier($tableName)
+                                ),
+                                sprintf(
+                                    '%s.%s.%s',
+                                    QueryBuilder::quoteIdentifier($database),
+                                    QueryBuilder::quoteIdentifier($schemaName),
+                                    $tableName
+                                ),
+                                sprintf(
+                                    '%s.%s.%s',
+                                    QueryBuilder::quoteIdentifier($database),
                                     QueryBuilder::quoteIdentifier($schemaName),
                                     QueryBuilder::quoteIdentifier($tableName)
                                 ),
