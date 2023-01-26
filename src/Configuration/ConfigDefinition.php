@@ -9,8 +9,6 @@ use Symfony\Component\Config\Definition\Builder\ArrayNodeDefinition;
 
 class ConfigDefinition extends BaseConfigDefinition
 {
-    private const DEFAULT_SNFLK_ROLE = 'KEBOOLA_STORAGE';
-
     protected function getParametersDefinition(): ArrayNodeDefinition
     {
         $parametersNode = parent::getParametersDefinition();

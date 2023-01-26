@@ -177,9 +177,10 @@ class Command
                         return in_array($v['name'], $validSchema);
                     }
                 );
-                $ownershipOnSchema = current(array_filter($schemaGrants, fn($v) => $v['privilege'] === 'OWNERSHIP'));
+                $ownershipOnSchema = array_filter($schemaGrants, fn($v) => $v['privilege'] === 'OWNERSHIP');
+                assert(count($ownershipOnSchema) === 1);
 
-                self::useRole($connection, $ownershipOnSchema['granted_by']);
+                self::useRole($connection, current($ownershipOnSchema)['granted_by']);
                 $connection->query(sprintf(
                     'CREATE SCHEMA %s.%s;',
                     QueryBuilder::quoteIdentifier($database),
@@ -216,7 +217,10 @@ class Command
                             return in_array($v['name'], $validSchema);
                         }
                     );
-                    $ownershipOnTable = current(array_filter($tableGrants, fn($v) => $v['privilege'] === 'OWNERSHIP'));
+                    $ownershipOnTable = array_filter($tableGrants, fn($v) => $v['privilege'] === 'OWNERSHIP');
+                    assert(count($ownershipOnTable) === 1);
+
+                    $ownershipOnTable = current($ownershipOnTable);
 
                     self::assignSharePrivilegesToRole($connection, $database, $ownershipOnTable['granted_by']);
                     self::useRole($connection, $ownershipOnTable['granted_by']);
@@ -300,8 +304,11 @@ class Command
         return $tmp;
     }
 
-    private static function getOtherRolesAndUsersToMainProjectRole(Connection $connection, array $roles, array $users): array
-    {
+    private static function getOtherRolesAndUsersToMainProjectRole(
+        Connection $connection,
+        array $roles,
+        array $users
+    ): array {
         foreach ($roles as $role) {
             $grantsToRole = $connection->fetchAll(sprintf(
                 'SHOW GRANTS TO ROLE %s;',
