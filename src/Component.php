@@ -28,13 +28,13 @@ class Component extends BaseComponent
         Command::useRole($destinationSnflkConnection, 'ACCOUNTADMIN');
 
 //        Export grants from source database
-        $userAndRolesGrants = Command::exportGrantsUsersAndRoles($sourceSnflkConnection, $databases);
+        $userAndRolesGrants = Command::exportUsersAndRolesGrants($sourceSnflkConnection, $databases);
 
 //        Get main role
         $mainRole = Command::getMainRole($sourceSnflkConnection, $databases);
 
 //        Cleanup destination account
-        Command::cleanupProject($destinationSnflkConnection);
+        Command::cleanupProject($destinationSnflkConnection, 'migrate');
 
 //        Create MainRole in destination anflk account
         Command::createMainRole(

@@ -257,19 +257,19 @@ class Command
         );
     }
 
-    public static function exportGrantsUsersAndRoles(Connection $connection, array $databases): array
+    public static function exportUsersAndRolesGrants(Connection $connection, array $databases): array
     {
         $tmp = [];
         foreach ($databases as $database) {
             $roles = $connection->fetchAll(sprintf(
                 'SHOW ROLES LIKE %s',
-                QueryBuilder::quote($database . '%')
+                QueryBuilder::quote($database)
             ));
 
             [
                 'roles' => $roles,
                 'users' => $users,
-            ] = self::assignWorkspacesUsersAndRoles($connection, $roles, [$database]);
+            ] = self::getOtherRolesAndUsersToMainProjectRole($connection, $roles, [$database]);
 
             foreach ($users as $user) {
                 $tmp[$database]['users'][] = [
@@ -300,7 +300,7 @@ class Command
         return $tmp;
     }
 
-    private static function assignWorkspacesUsersAndRoles(Connection $connection, array $roles, array $users): array
+    private static function getOtherRolesAndUsersToMainProjectRole(Connection $connection, array $roles, array $users): array
     {
         foreach ($roles as $role) {
             $grantsToRole = $connection->fetchAll(sprintf(
@@ -373,11 +373,6 @@ class Command
         self::createRole($connection, ['name' => $mainRole]);
 
         $connection->query(sprintf(
-            'DROP WAREHOUSE IF EXISTS %s',
-            $warehouse
-        ));
-
-        $connection->query(sprintf(
             'GRANT CREATE DATABASE ON ACCOUNT TO ROLE %s;',
             $mainRole
         ));
@@ -436,7 +431,7 @@ SQL;
         ));
     }
 
-    public static function cleanupProject(Connection $connection): void
+    public static function cleanupProject(Connection $connection, string $warehouse): void
     {
         try {
             self::useRole($connection, 'SAPI_9472');
@@ -483,6 +478,11 @@ SQL;
                 QueryBuilder::quoteIdentifier($database)
             ));
         }
+
+        $connection->query(sprintf(
+            'DROP WAREHOUSE IF EXISTS %s',
+            $warehouse
+        ));
     }
 
     private static function assignSharePrivilegesToRole(Connection $connection, string $database, string $role): void
