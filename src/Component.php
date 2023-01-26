@@ -9,6 +9,7 @@ use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Configuration\ConfigDefinition;
 use ProjectMigrationTool\Snowflake\Command;
 use ProjectMigrationTool\Snowflake\ConnectionFactory;
+use ProjectMigrationTool\Snowflake\Helper;
 
 class Component extends BaseComponent
 {
@@ -31,39 +32,37 @@ class Component extends BaseComponent
         $userAndRolesGrants = Command::exportUsersAndRolesGrants($sourceSnflkConnection, $databases);
 
 //        Get main role
-        $mainRole = Command::getMainRole($sourceSnflkConnection, $databases);
+        $mainRoleWithGrants = Command::getMainRoleWithGrants($sourceSnflkConnection, $databases);
 
 //        Cleanup destination account
-        Command::cleanupProject($destinationSnflkConnection, 'migrate');
+        Command::cleanupProject($destinationSnflkConnection);
 
 //        Create MainRole in destination anflk account
         Command::createMainRole(
+            $sourceSnflkConnection,
             $destinationSnflkConnection,
-            $mainRole,
-            'migrate',
+            $mainRoleWithGrants,
             $this->getConfig()->getUsers()
         );
 
-//
-//        [
-//            'databases' => $databaseGrants,
-//            'schemas' => $schemasGrants,
-//            'tables' => $tablesGrants,
-//            'roles' => $rolesGrants,
-//            'account' => $accountGrants,
-//            'warehouse' => $warehouseGrants,
-//            'other' => $otherGrants
-//        ] = Helper::parseGrantsToObjects($userAndRolesGrants['SAPI_9472']);
-//
-//        file_put_contents('data/account.json', json_encode($accountGrants));
-//        file_put_contents('data/grants.json', json_encode($userAndRolesGrants));
-//        file_put_contents('data/ownerships.json', json_encode($ownershipGrants));
-//        file_put_contents('data/databaseGrants.json', json_encode($databaseGrants));
-//        file_put_contents('data/schemasGrants.json', json_encode($schemasGrants));
-//        file_put_contents('data/tablesGrants.json', json_encode($tablesGrants));
-//        file_put_contents('data/rolesGrants.json', json_encode($rolesGrants));
-//        file_put_contents('data/otherGrants.json', json_encode($otherGrants));
-//        file_put_contents('data/warehouseGrants.json', json_encode($warehouseGrants));
+        [
+            'databases' => $databaseGrants,
+            'schemas' => $schemasGrants,
+            'tables' => $tablesGrants,
+            'roles' => $rolesGrants,
+            'account' => $accountGrants,
+            'warehouse' => $warehouseGrants,
+            'other' => $otherGrants,
+        ] = Helper::parseGrantsToObjects($userAndRolesGrants['SAPI_9472']);
+
+        file_put_contents('data/account.json', json_encode($accountGrants));
+        file_put_contents('data/grants.json', json_encode($userAndRolesGrants));
+        file_put_contents('data/databaseGrants.json', json_encode($databaseGrants));
+        file_put_contents('data/schemasGrants.json', json_encode($schemasGrants));
+        file_put_contents('data/tablesGrants.json', json_encode($tablesGrants));
+        file_put_contents('data/rolesGrants.json', json_encode($rolesGrants));
+        file_put_contents('data/otherGrants.json', json_encode($otherGrants));
+        file_put_contents('data/warehouseGrants.json', json_encode($warehouseGrants));
 
         $this->getLogger()->info('Check region of databases.');
         $sourceRegion = Command::getRegion($sourceSnflkConnection);
@@ -87,7 +86,7 @@ class Component extends BaseComponent
         Command::createDatabasesFromShares($destinationSnflkConnection, $databases, $sourceAccount);
         Command::cloneDatabaseFromShared(
             $destinationSnflkConnection,
-            $mainRole,
+            $mainRoleWithGrants['name'],
             $databases,
             $userAndRolesGrants
         );

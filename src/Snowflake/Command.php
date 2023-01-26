@@ -409,75 +409,70 @@ class Command
     }
 
     public static function createMainRole(
-        Connection $connection,
-        string $mainRole,
-        string $warehouse,
+        Connection $connectionSourceProject,
+        Connection $connectionDestinationProject,
+        array $mainRoleWithGrants,
         array $users
     ): void {
-        $user = $mainRole;
+        $user = $mainRole = $mainRoleWithGrants['name'];
 
-        self::createRole($connection, ['name' => $mainRole, 'privilege' => 'OWNERSHIP']);
+        self::createRole($connectionDestinationProject, ['name' => $mainRole, 'privilege' => 'OWNERSHIP']);
 
-        $connection->query(sprintf(
+        $mainRoleGrants = [
             'GRANT CREATE DATABASE ON ACCOUNT TO ROLE %s;',
-            $mainRole
-        ));
-
-        $connection->query(sprintf(
             'GRANT CREATE ROLE ON ACCOUNT TO ROLE %s WITH GRANT OPTION;',
-            $mainRole
-        ));
-
-        $connection->query(sprintf(
             'GRANT CREATE USER ON ACCOUNT TO ROLE %s WITH GRANT OPTION;',
-            $mainRole
-        ));
+        ];
 
-        $createWarehouseSql = <<<SQL
-CREATE WAREHOUSE %s WITH WAREHOUSE_SIZE = 'XSMALL' WAREHOUSE_TYPE = 'STANDARD' AUTO_SUSPEND = 300 AUTO_RESUME = TRUE;
-SQL;
+        foreach ($mainRoleGrants as $mainRoleGrant) {
+            $connectionDestinationProject->query(sprintf($mainRoleGrant, $mainRole));
+        }
 
-        $connection->query(sprintf(
-            $createWarehouseSql,
-            $warehouse
-        ));
+        $warehouses = array_filter($mainRoleWithGrants['assignedGrants'], fn($v) => $v['granted_on'] === 'WAREHOUSE');
+        $useWarehouse = false;
+        foreach ($warehouses as $warehouse) {
+            $warehouseSize = self::createWarehouse(
+                $connectionSourceProject,
+                $connectionDestinationProject,
+                $warehouse
+            );
+            self::assignGrantToRole($connectionDestinationProject, $warehouse);
 
-        $connection->query(sprintf(
-            'GRANT USAGE ON WAREHOUSE %s TO ROLE %s WITH GRANT OPTION;',
-            $warehouse,
-            $mainRole
-        ));
+            if ($useWarehouse === false || $warehouseSize === 'X-Small') {
+                $useWarehouse = $warehouse;
+            }
+        }
 
-        $connection->query(sprintf(
+        $connectionDestinationProject->query(sprintf(
             'USE WAREHOUSE %s',
-            $warehouse
+            QueryBuilder::quoteIdentifier($useWarehouse['name'])
         ));
 
-        $connection->query(sprintf(
+        $connectionDestinationProject->query(sprintf(
             'DROP USER IF EXISTS %s',
             $user
         ));
 
-        $connection->query(sprintf(
+        $connectionDestinationProject->query(sprintf(
             'CREATE USER %s PASSWORD=%s DEFAULT_ROLE=%s',
             $user,
             QueryBuilder::quoteIdentifier($users[$user]),
             $mainRole
         ));
 
-        $connection->query(sprintf(
+        $connectionDestinationProject->query(sprintf(
             'GRANT ROLE %s TO USER %s;',
             $mainRole,
             $user
         ));
 
-        $connection->query(sprintf(
+        $connectionDestinationProject->query(sprintf(
             'GRANT ROLE %s TO ROLE SYSADMIN;',
             $mainRole
         ));
     }
 
-    public static function cleanupProject(Connection $connection, string $warehouse): void
+    public static function cleanupProject(Connection $connection): void
     {
         try {
             self::useRole($connection, 'SAPI_9472');
@@ -525,10 +520,19 @@ SQL;
             ));
         }
 
-        $connection->query(sprintf(
-            'DROP WAREHOUSE IF EXISTS %s',
-            $warehouse
-        ));
+        $warehouses = [
+            'MIGRATE',
+            'MIGRATE_SMALL',
+            'MIGRATE_MEDIUM',
+            'MIGRATE_LARGE',
+        ];
+
+        foreach ($warehouses as $warehouse) {
+            $connection->query(sprintf(
+                'DROP WAREHOUSE IF EXISTS %s',
+                $warehouse
+            ));
+        }
     }
 
     private static function assignSharePrivilegesToRole(Connection $connection, string $database, string $role): void
@@ -544,14 +548,10 @@ SQL;
         ]);
     }
 
-    public static function getMainRole(Connection $connection, array $databases): string
+    public static function getMainRoleWithGrants(Connection $connection, array $databases): array
     {
         $grantsOfRoles = [];
         foreach ($databases as $database) {
-            $grantsOfRole = $connection->fetchAll(sprintf(
-                'SHOW GRANTS OF ROLE %s',
-                $database
-            ));
             $grantedByRole = array_map(fn($v) => $v['granted_by'], $connection->fetchAll(sprintf(
                 'SHOW GRANTS OF ROLE %s',
                 $database
@@ -563,6 +563,58 @@ SQL;
 
         assert(count($uniqueMainRoles) === 1);
 
-        return current($uniqueMainRoles);
+        $mainRole = current($uniqueMainRoles);
+
+        return [
+            'name' => $mainRole,
+            'assignedGrants' => $connection->fetchAll(sprintf(
+                'SHOW GRANTS TO ROLE %s;',
+                $mainRole
+            )),
+        ];
+    }
+
+    private static function createWarehouse(
+        Connection $connectionSourceProject,
+        Connection $connectionDestinationProject,
+        array $warehouse
+    ): string {
+        $warehouseInfo = $connectionSourceProject->fetchAll(sprintf(
+            'SHOW WAREHOUSES LIKE %s',
+            QueryBuilder::quote($warehouse['name'])
+        ));
+        assert(count($warehouseInfo) === 1);
+
+        $warehouseInfo = current($warehouseInfo);
+
+        $sqlTemplate = <<<SQL
+CREATE WAREHOUSE %s
+    WITH WAREHOUSE_SIZE = %s
+        WAREHOUSE_TYPE = %s
+        AUTO_SUSPEND = %s
+        AUTO_RESUME = %s
+        %s
+        %s
+;
+SQL;
+
+        $sql = sprintf(
+            $sqlTemplate,
+            QueryBuilder::quoteIdentifier($warehouseInfo['name']),
+            QueryBuilder::quote($warehouseInfo['size']),
+            QueryBuilder::quote($warehouseInfo['type']),
+            $warehouseInfo['auto_suspend'],
+            $warehouseInfo['auto_resume'],
+            isset($warehouseInfo['min_cluster_count']) ?
+                'MIN_CLUSTER_COUNT = ' . $warehouseInfo['min_cluster_count'] :
+                '',
+            isset($warehouseInfo['max_cluster_count']) ?
+                'MAX_CLUSTER_COUNT = ' . $warehouseInfo['max_cluster_count'] :
+                '',
+        );
+
+        $connectionDestinationProject->query($sql);
+
+        return $warehouseInfo['size'];
     }
 }
