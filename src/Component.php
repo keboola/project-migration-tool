@@ -91,6 +91,7 @@ class Component extends BaseComponent
         Command::cloneDatabaseFromShared(
             $this->getLogger(),
             $this->getConfig(),
+            $sourceSnflkConnection,
             $destinationSnflkConnection,
             $mainRoleWithGrants['name'],
             $databases,

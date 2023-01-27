@@ -105,12 +105,14 @@ class Command
     public static function cloneDatabaseFromShared(
         LoggerInterface $logger,
         Config $config,
-        Connection $connection,
+        Connection $sourceConnection,
+        Connection $destinationConnection,
         string $mainRole,
         array $databases,
         array $grants
     ): void {
         foreach ($databases as $database) {
+            $databaseRole = self::getMainRoleOnDatabase($sourceConnection, $database);
             [
                 'databases' => $databaseGrants,
                 'schemas' => $schemasGrants,
@@ -120,41 +122,41 @@ class Command
                 'warehouse' => $warehouseGrants,
                 'user' => $userGrants,
                 'other' => $otherGrants,
-            ] = Helper::parseGrantsToObjects($grants[$database]);
+            ] = Helper::parseGrantsToObjects($grants[$databaseRole]);
 
             self::createRole(
-                $connection,
+                $destinationConnection,
                 [
-                    'name' => $database,
+                    'name' => $databaseRole,
                     'granted_by' => $mainRole,
                     'privilege' => 'OWNERSHIP',
                 ]
             );
             foreach ($accountGrants as $grant) {
-                self::assignGrantToRole($connection, $grant);
+                self::assignGrantToRole($destinationConnection, $grant);
             }
 
             foreach ($rolesGrants as $rolesGrant) {
                 if ($rolesGrant['privilege'] === 'OWNERSHIP') {
-                    self::createRole($connection, $rolesGrant);
+                    self::createRole($destinationConnection, $rolesGrant);
                 }
-                self::assignGrantToRole($connection, $rolesGrant);
+                self::assignGrantToRole($destinationConnection, $rolesGrant);
             }
 
             foreach ($userGrants as $userGrant) {
-                self::createUser($logger, $connection, $userGrant, $config->getPasswordOfUsers());
-                self::assignGrantToRole($connection, $userGrant);
+                self::createUser($logger, $destinationConnection, $userGrant, $config->getPasswordOfUsers());
+                self::assignGrantToRole($destinationConnection, $userGrant);
             }
 
             foreach ($warehouseGrants as $warehouseGrant) {
-                self::assignGrantToRole($connection, $warehouseGrant);
+                self::assignGrantToRole($destinationConnection, $warehouseGrant);
             }
 
-            self::useRole($connection, $mainRole);
+            self::useRole($destinationConnection, $mainRole);
 
             $shareDbName = $database . '_SHARE';
 
-            $connection->query(sprintf(
+            $destinationConnection->query(sprintf(
                 'CREATE DATABASE %s;',
                 QueryBuilder::quoteIdentifier($database)
             ));
@@ -162,18 +164,18 @@ class Command
             foreach ($databaseGrants as $databaseGrant) {
                 if ($databaseGrant['privilege'] === 'OWNERSHIP') {
                     self::assignGrantToRole(
-                        $connection,
+                        $destinationConnection,
                         array_merge($databaseGrant, ['granted_by' => $mainRole])
                     );
                 }
-                self::assignGrantToRole($connection, $databaseGrant);
+                self::assignGrantToRole($destinationConnection, $databaseGrant);
             }
 
-            self::assignSharePrivilegesToRole($connection, $database, $database);
+            self::assignSharePrivilegesToRole($destinationConnection, $database, $databaseRole);
 
-            self::useRole($connection, $database);
+            self::useRole($destinationConnection, $databaseRole);
 
-            $schemas = $connection->fetchAll(sprintf(
+            $schemas = $destinationConnection->fetchAll(sprintf(
                 'SHOW SCHEMAS IN DATABASE %s;',
                 QueryBuilder::quoteIdentifier($shareDbName)
             ));
@@ -203,18 +205,18 @@ class Command
                 $ownershipOnSchema = array_filter($schemaGrants, fn($v) => $v['privilege'] === 'OWNERSHIP');
                 assert(count($ownershipOnSchema) === 1);
 
-                self::useRole($connection, current($ownershipOnSchema)['granted_by']);
-                $connection->query(sprintf(
+                self::useRole($destinationConnection, current($ownershipOnSchema)['granted_by']);
+                $destinationConnection->query(sprintf(
                     'CREATE SCHEMA %s.%s;',
                     QueryBuilder::quoteIdentifier($database),
                     QueryBuilder::quoteIdentifier($schemaName)
                 ));
 
                 foreach ($schemaGrants as $schemaGrant) {
-                    self::assignGrantToRole($connection, $schemaGrant);
+                    self::assignGrantToRole($destinationConnection, $schemaGrant);
                 }
 
-                $tables = $connection->fetchAll(sprintf(
+                $tables = $destinationConnection->fetchAll(sprintf(
                     'SHOW TABLES IN SCHEMA %s.%s;',
                     QueryBuilder::quoteIdentifier($shareDbName),
                     QueryBuilder::quoteIdentifier($schemaName)
@@ -269,10 +271,14 @@ class Command
 
                     $ownershipOnTable = current($ownershipOnTable);
 
-                    self::assignSharePrivilegesToRole($connection, $database, $ownershipOnTable['granted_by']);
-                    self::useRole($connection, $ownershipOnTable['granted_by']);
+                    self::assignSharePrivilegesToRole(
+                        $destinationConnection,
+                        $database,
+                        $ownershipOnTable['granted_by']
+                    );
+                    self::useRole($destinationConnection, $ownershipOnTable['granted_by']);
 
-                    $connection->query(sprintf(
+                    $destinationConnection->query(sprintf(
                         'CREATE TABLE %s.%s.%s AS SELECT * FROM %s.%s.%s;',
                         QueryBuilder::quoteIdentifier($database),
                         QueryBuilder::quoteIdentifier($schemaName),
@@ -283,7 +289,7 @@ class Command
                     ));
 
                     foreach ($tableGrants as $tableGrant) {
-                        self::assignGrantToRole($connection, $tableGrant);
+                        self::assignGrantToRole($destinationConnection, $tableGrant);
                     }
                 }
             }
@@ -345,15 +351,17 @@ class Command
     {
         $tmp = [];
         foreach ($databases as $database) {
+            $databaseRole = self::getMainRoleOnDatabase($connection, $database);
+
             $roles = $connection->fetchAll(sprintf(
                 'SHOW ROLES LIKE %s',
-                QueryBuilder::quote($database)
+                QueryBuilder::quote($databaseRole)
             ));
 
             $roles = self::getOtherRolesToMainProjectRole($connection, $roles);
 
             foreach ($roles as $role) {
-                $tmp[$database][] = array_merge(
+                $tmp[$databaseRole][] = array_merge(
                     $role,
                     [
                         'assignedGrants' => $connection->fetchAll(sprintf(
@@ -625,9 +633,11 @@ class Command
     {
         $grantsOfRoles = [];
         foreach ($databases as $database) {
+            $roleName = self::getMainRoleOnDatabase($connection, $database);
+
             $grantedByRole = array_map(fn($v) => $v['granted_by'], $connection->fetchAll(sprintf(
                 'SHOW GRANTS OF ROLE %s',
-                $database
+                $roleName
             )));
             $grantsOfRoles = array_merge($grantsOfRoles, array_unique($grantedByRole));
         }
@@ -727,5 +737,18 @@ SQL;
                 ));
             }
         }
+    }
+
+    private static function getMainRoleOnDatabase(Connection $connection, string $database): string
+    {
+        $grantsOnDatabase = $connection->fetchAll(sprintf(
+            'SHOW GRANTS ON DATABASE %s',
+            $database
+        ));
+
+        $ownershipOnDatabase = array_filter($grantsOnDatabase, fn($v) => $v['privilege'] === 'OWNERSHIP');
+        assert(count($ownershipOnDatabase) === 1);
+
+        return current($ownershipOnDatabase)['grantee_name'];
     }
 }
