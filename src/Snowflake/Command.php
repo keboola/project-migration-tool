@@ -7,6 +7,8 @@ namespace ProjectMigrationTool\Snowflake;
 use Keboola\SnowflakeDbAdapter\Connection;
 use Keboola\SnowflakeDbAdapter\Exception\CannotAccessObjectException;
 use Keboola\SnowflakeDbAdapter\QueryBuilder;
+use ProjectMigrationTool\Configuration\Config;
+use Psr\Log\LoggerInterface;
 
 class Command
 {
@@ -101,6 +103,8 @@ class Command
     }
 
     public static function cloneDatabaseFromShared(
+        LoggerInterface $logger,
+        Config $config,
         Connection $connection,
         string $mainRole,
         array $databases,
@@ -114,6 +118,7 @@ class Command
                 'roles' => $rolesGrants,
                 'account' => $accountGrants,
                 'warehouse' => $warehouseGrants,
+                'user' => $userGrants,
                 'other' => $otherGrants,
             ] = Helper::parseGrantsToObjects($grants[$database]);
 
@@ -134,6 +139,11 @@ class Command
                     self::createRole($connection, $rolesGrant);
                 }
                 self::assignGrantToRole($connection, $rolesGrant);
+            }
+
+            foreach ($userGrants as $userGrant) {
+                self::createUser($logger, $connection, $userGrant, $config->getPasswordOfUsers());
+                self::assignGrantToRole($connection, $userGrant);
             }
 
             foreach ($warehouseGrants as $warehouseGrant) {
@@ -280,6 +290,37 @@ class Command
         }
     }
 
+    public static function createUser(
+        LoggerInterface $logger,
+        Connection $connection,
+        array $userGrant,
+        array $passwordOfUsers
+    ): void {
+        self::useRole($connection, $userGrant['granted_by']);
+
+        if (isset($passwordOfUsers[$userGrant['name']])) {
+            $connection->query(sprintf(
+                'CREATE USER %s PASSWORD=\'%s\' DEFAULT_ROLE = %s',
+                $userGrant['name'],
+                $passwordOfUsers[$userGrant['name']],
+                $userGrant['name'],
+            ));
+        } else {
+            $password = Helper::generateRandomString();
+            $logger->alert(sprintf(
+                'User "%s" has been created with password "%s". Please change it immediately!',
+                $userGrant['name'],
+                $password
+            ));
+            $connection->query(sprintf(
+                'CREATE USER %s PASSWORD=\'%s\' DEFAULT_ROLE = %s MUST_CHANGE_PASSWORD = true',
+                $userGrant['name'],
+                $password,
+                $userGrant['name'],
+            ));
+        }
+    }
+
     public static function createRole(Connection $connection, array $role): void
     {
         assert($role['privilege'] === 'OWNERSHIP');
@@ -309,23 +350,10 @@ class Command
                 QueryBuilder::quote($database)
             ));
 
-            [
-                'roles' => $roles,
-                'users' => $users,
-            ] = self::getOtherRolesAndUsersToMainProjectRole($connection, $roles, [$database]);
-
-            foreach ($users as $user) {
-                $tmp[$database]['users'][] = [
-                    'name' => $user,
-                    'assignedGrants' => $connection->fetchAll(sprintf(
-                        'SHOW GRANTS TO USER %s;',
-                        $user
-                    )),
-                ];
-            }
+            $roles = self::getOtherRolesToMainProjectRole($connection, $roles);
 
             foreach ($roles as $role) {
-                $tmp[$database]['roles'][] = array_merge(
+                $tmp[$database][] = array_merge(
                     $role,
                     [
                         'assignedGrants' => $connection->fetchAll(sprintf(
@@ -343,10 +371,9 @@ class Command
         return $tmp;
     }
 
-    private static function getOtherRolesAndUsersToMainProjectRole(
+    private static function getOtherRolesToMainProjectRole(
         Connection $connection,
-        array $roles,
-        array $users
+        array $roles
     ): array {
         foreach ($roles as $role) {
             $grantsToRole = $connection->fetchAll(sprintf(
@@ -362,13 +389,9 @@ class Command
                 array_map(fn($v) => $v['name'], $filteredRolesInRole),
                 $filteredRolesInRole
             ));
-
-            $usersInRole = array_filter($ownershipToRole, fn($v) => $v['granted_on'] === 'USER');
-            $filteredUsersInRole = array_filter($usersInRole, fn($v) => !in_array($v['name'], $users));
-            $users = array_merge($users, array_map(fn($v) => $v['name'], $filteredUsersInRole));
         }
 
-        return ['roles' => $roles, 'users' => $users];
+        return $roles;
     }
 
     public static function grantRoleToUser(Connection $connection, string $user, string $role): void
@@ -409,9 +432,11 @@ class Command
     }
 
     public static function createMainRole(
+        LoggerInterface $logger,
         Connection $connectionSourceProject,
         Connection $connectionDestinationProject,
         array $mainRoleWithGrants,
+        array $databases,
         array $users
     ): void {
         $user = $mainRole = $mainRoleWithGrants['name'];
@@ -449,14 +474,9 @@ class Command
         ));
 
         $connectionDestinationProject->query(sprintf(
-            'DROP USER IF EXISTS %s',
-            $user
-        ));
-
-        $connectionDestinationProject->query(sprintf(
             'CREATE USER %s PASSWORD=%s DEFAULT_ROLE=%s',
             $user,
-            QueryBuilder::quoteIdentifier($users[$user]),
+            QueryBuilder::quote($users[$user]),
             $mainRole
         ));
 
@@ -465,6 +485,23 @@ class Command
             $mainRole,
             $user
         ));
+
+        $projectUsers = array_filter($mainRoleWithGrants['assignedGrants'], function ($v) use ($databases) {
+            if ($v['privilege'] !== 'OWNERSHIP') {
+                return false;
+            }
+            if ($v['granted_on'] !== 'USER') {
+                return false;
+            }
+            return in_array($v['name'], $databases);
+        });
+
+        foreach ($projectUsers as $projectUser) {
+            self::createUser($logger, $connectionDestinationProject, $projectUser, $users);
+            self::assignGrantToRole($connectionDestinationProject, $projectUser);
+        }
+
+        self::useRole($connectionDestinationProject, 'ACCOUNTADMIN');
 
         $connectionDestinationProject->query(sprintf(
             'GRANT ROLE %s TO ROLE SYSADMIN;',
@@ -531,6 +568,42 @@ class Command
             $connection->query(sprintf(
                 'DROP WAREHOUSE IF EXISTS %s',
                 $warehouse
+            ));
+        }
+
+        $users = [
+            'SAPI_WORKSPACE_941797557',
+            'SAPI_WORKSPACE_942116815',
+            'SAPI_9472',
+            'SAPI_9473',
+            'KEBOOLA_STORAGE',
+        ];
+
+        foreach ($users as $user) {
+            $connection->query(sprintf(
+                'DROP USER IF EXISTS %s',
+                $user
+            ));
+        }
+
+        $roles = [
+            'SAPI_9472',
+            'SAPI_9472_1073748_SHARE',
+            'SAPI_9472_1073763_SHARE',
+            'SAPI_9472_1075089_SHARE',
+            'SAPI_9472_RO',
+            'SAPI_9473',
+            'SAPI_9474',
+            'SAPI_9475',
+            'SAPI_9476',
+            'SAPI_WORKSPACE_941797557',
+            'SAPI_WORKSPACE_942116815',
+        ];
+
+        foreach ($roles as $role) {
+            $connection->query(sprintf(
+                'DROP ROLE IF EXISTS %s',
+                $role
             ));
         }
     }
@@ -616,5 +689,43 @@ SQL;
         $connectionDestinationProject->query($sql);
 
         return $warehouseInfo['size'];
+    }
+
+    public static function grantRoleToUsers(
+        Connection $sourceConnection,
+        Connection $destinationConnection,
+        string $mainUser
+    ): void {
+        self::useRole($destinationConnection, 'ACCOUNTADMIN');
+        self::useRole($sourceConnection, 'ACCOUNTADMIN');
+
+        $users = $destinationConnection->fetchAll('SHOW USERS');
+
+        $filteredUsers = array_filter($users, function ($v) use ($mainUser) {
+            if ($v['owner'] === 'ACCOUNTADMIN' && $v['name'] !== $mainUser) {
+                return false;
+            }
+            if ($v['owner'] === '') {
+                return false;
+            }
+            return true;
+        });
+
+        foreach ($filteredUsers as $filteredUser) {
+            $grants = $sourceConnection->fetchAll(sprintf(
+                'SHOW GRANTS TO USER %s',
+                QueryBuilder::quoteIdentifier($filteredUser['name'])
+            ));
+
+            foreach ($grants as $grant) {
+                self::useRole($destinationConnection, $grant['granted_by']);
+                $destinationConnection->query(sprintf(
+                    'GRANT ROLE %s TO %s %s',
+                    $grant['role'],
+                    $grant['granted_to'],
+                    $grant['grantee_name'],
+                ));
+            }
+        }
     }
 }

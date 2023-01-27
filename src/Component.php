@@ -29,7 +29,7 @@ class Component extends BaseComponent
         Command::useRole($destinationSnflkConnection, 'ACCOUNTADMIN');
 
 //        Export grants from source database
-        $userAndRolesGrants = Command::exportUsersAndRolesGrants($sourceSnflkConnection, $databases);
+        $rolesGrants = Command::exportUsersAndRolesGrants($sourceSnflkConnection, $databases);
 
 //        Get main role
         $mainRoleWithGrants = Command::getMainRoleWithGrants($sourceSnflkConnection, $databases);
@@ -39,30 +39,34 @@ class Component extends BaseComponent
 
 //        Create MainRole in destination anflk account
         Command::createMainRole(
+            $this->getLogger(),
             $sourceSnflkConnection,
             $destinationSnflkConnection,
             $mainRoleWithGrants,
-            $this->getConfig()->getUsers()
+            $databases,
+            $this->getConfig()->getPasswordOfUsers()
         );
 
         [
-            'databases' => $databaseGrants,
-            'schemas' => $schemasGrants,
-            'tables' => $tablesGrants,
-            'roles' => $rolesGrants,
-            'account' => $accountGrants,
-            'warehouse' => $warehouseGrants,
-            'other' => $otherGrants,
-        ] = Helper::parseGrantsToObjects($userAndRolesGrants['SAPI_9472']);
+            'databases' => $databasedatabaseGrants,
+            'schemas' => $databaseschemasGrants,
+            'tables' => $databasetablesGrants,
+            'roles' => $databaserolesGrants,
+            'account' => $databaseaccountGrants,
+            'warehouse' => $databasewarehouseGrants,
+            'user' => $databaseuserGrants,
+            'other' => $databaseotherGrants,
+        ] = Helper::parseGrantsToObjects($rolesGrants['SAPI_9472']);
 
-        file_put_contents('data/account.json', json_encode($accountGrants));
-        file_put_contents('data/grants.json', json_encode($userAndRolesGrants));
-        file_put_contents('data/databaseGrants.json', json_encode($databaseGrants));
-        file_put_contents('data/schemasGrants.json', json_encode($schemasGrants));
-        file_put_contents('data/tablesGrants.json', json_encode($tablesGrants));
-        file_put_contents('data/rolesGrants.json', json_encode($rolesGrants));
-        file_put_contents('data/otherGrants.json', json_encode($otherGrants));
-        file_put_contents('data/warehouseGrants.json', json_encode($warehouseGrants));
+        file_put_contents('data/account.json', json_encode($databaseaccountGrants));
+        file_put_contents('data/grants.json', json_encode($rolesGrants));
+        file_put_contents('data/databaseGrants.json', json_encode($databasedatabaseGrants));
+        file_put_contents('data/schemasGrants.json', json_encode($databaseschemasGrants));
+        file_put_contents('data/tablesGrants.json', json_encode($databasetablesGrants));
+        file_put_contents('data/rolesGrants.json', json_encode($databaserolesGrants));
+        file_put_contents('data/otherGrants.json', json_encode($databaseotherGrants));
+        file_put_contents('data/userGrants.json', json_encode($databaseuserGrants));
+        file_put_contents('data/warehouseGrants.json', json_encode($databasewarehouseGrants));
 
         $this->getLogger()->info('Check region of databases.');
         $sourceRegion = Command::getRegion($sourceSnflkConnection);
@@ -85,13 +89,15 @@ class Component extends BaseComponent
 //        create and clone databases from shares
         Command::createDatabasesFromShares($destinationSnflkConnection, $databases, $sourceAccount);
         Command::cloneDatabaseFromShared(
+            $this->getLogger(),
+            $this->getConfig(),
             $destinationSnflkConnection,
             $mainRoleWithGrants['name'],
             $databases,
-            $userAndRolesGrants
+            $rolesGrants
         );
 
-        var_dump($sourceRegion, $destinationRegion);
+        Command::grantRoleToUsers($sourceSnflkConnection, $destinationSnflkConnection, $mainRoleWithGrants['name']);
     }
 
     public function getConfig(): Config

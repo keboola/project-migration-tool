@@ -20,7 +20,7 @@ class ConfigDefinition extends BaseConfigDefinition
                 ->arrayNode('migrateDatabases')
                     ->scalarPrototype()->end()
                 ->end()
-                ->arrayNode('users')
+                ->arrayNode('passwordOfUsers')
                     ->ignoreExtraKeys(false)
                 ->end()
             ->end()

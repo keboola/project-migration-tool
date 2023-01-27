@@ -13,8 +13,8 @@ class Config extends BaseConfig
         return $this->getArrayValue(['parameters', 'migrateDatabases']);
     }
 
-    public function getUsers(): array
+    public function getPasswordOfUsers(): array
     {
-        return $this->getArrayValue(['parameters', 'users']);
+        return $this->getArrayValue(['parameters', 'passwordOfUsers']);
     }
 }
