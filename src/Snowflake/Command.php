@@ -635,11 +635,16 @@ class Command
         foreach ($databases as $database) {
             $roleName = self::getMainRoleOnDatabase($connection, $database);
 
-            $grantedByRole = array_map(fn($v) => $v['granted_by'], $connection->fetchAll(sprintf(
-                'SHOW GRANTS OF ROLE %s',
+            $grantedOnDatabaseRole = $connection->fetchAll(sprintf(
+                'SHOW GRANTS ON ROLE %s',
                 $roleName
-            )));
-            $grantsOfRoles = array_merge($grantsOfRoles, array_unique($grantedByRole));
+            ));
+
+            $ownershipOfRole = array_filter($grantedOnDatabaseRole, fn($v) => $v['privilege'] === 'OWNERSHIP');
+
+            $ownershipOfRole = array_map(fn($v) => $v['grantee_name'], $ownershipOfRole);
+
+            $grantsOfRoles = array_merge($grantsOfRoles, array_unique($ownershipOfRole));
         }
 
         $uniqueMainRoles = array_unique($grantsOfRoles);
