@@ -2,16 +2,23 @@
 
 declare(strict_types=1);
 
-namespace ProjectMigrationTool\Snowflake;
+namespace ProjectMigrationTool;
 
-use Keboola\SnowflakeDbAdapter\Connection;
-use Keboola\SnowflakeDbAdapter\Exception\CannotAccessObjectException;
 use Keboola\SnowflakeDbAdapter\QueryBuilder;
 use ProjectMigrationTool\Configuration\Config;
+use ProjectMigrationTool\Snowflake\Connection;
+use ProjectMigrationTool\Snowflake\Helper;
 use Psr\Log\LoggerInterface;
 
-class Command
+class Migrate
 {
+    private LoggerInterface $logger;
+
+    private Connection $sourceConnection;
+
+    private Connection $migrateConnection;
+
+    private Connection $destinationConnection;
 
     private const MIGRATION_SHARE_PREFIX = 'MIGRATION_SHARE_';
 
@@ -20,27 +27,28 @@ class Command
         'PUBLIC',
     ];
 
-    public static function useRole(Connection $connection, string $role): void
-    {
-        $connection->query(sprintf('USE ROLE "%s";', $role));
+    public function __construct(
+        LoggerInterface $logger,
+        Connection $sourceConnection,
+        Connection $migrateConnection,
+        Connection $destinationConnection
+    ) {
+        $this->logger = $logger;
+        $this->sourceConnection = $sourceConnection;
+        $this->migrateConnection = $migrateConnection;
+        $this->destinationConnection = $destinationConnection;
     }
 
-    public static function getRegion(Connection $connection): string
+    public function createShare(array $databases): void
     {
-        $region = $connection->fetchAll('SELECT CURRENT_REGION() AS "region";');
+        $sourceRegion = $this->sourceConnection->getRegion();
+        $destinationRegion = $this->destinationConnection->getRegion();
 
-        return $region[0]['region'];
-    }
+        $connection = $this->sourceConnection;
+        if ($sourceRegion !== $destinationRegion) {
+            $connection = $this->migrateConnection;
+        }
 
-    public static function getAccount(Connection $connection): string
-    {
-        $account = $connection->fetchAll('SELECT CURRENT_ACCOUNT() AS "account";');
-
-        return $account[0]['account'];
-    }
-
-    public static function createShare(Connection $connection, array $databases, string $destinationAccount): void
-    {
         foreach ($databases as $database) {
             $shareName = sprintf('%s%s', self::MIGRATION_SHARE_PREFIX, strtoupper($database));
 
@@ -75,44 +83,44 @@ class Command
             $connection->query(sprintf(
                 'ALTER SHARE %s ADD ACCOUNT=%s;',
                 QueryBuilder::quoteIdentifier($shareName),
-                $destinationAccount
+                $this->destinationConnection->getAccount()
             ));
         }
     }
 
-    public static function createDatabasesFromShares(
-        Connection $connection,
-        array $databases,
-        string $sourceAccount
-    ): void {
+    public function createDatabasesFromShares(array $databases): void
+    {
+        $sourceRegion = $this->sourceConnection->getRegion();
+        $destinationRegion = $this->destinationConnection->getRegion();
+
         foreach ($databases as $database) {
             $shareDbName = $database . '_SHARE';
 
-            $connection->query(sprintf(
+            $this->destinationConnection->query(sprintf(
                 'DROP DATABASE IF EXISTS %s;',
                 QueryBuilder::quoteIdentifier($shareDbName)
             ));
 
-            $connection->query(sprintf(
+            $this->destinationConnection->query(sprintf(
                 'CREATE DATABASE %s FROM SHARE IDENTIFIER(\'%s.%s\');',
                 QueryBuilder::quoteIdentifier($shareDbName),
-                $sourceAccount,
+                $sourceRegion !== $destinationRegion ?
+                    $this->migrateConnection->getAccount() :
+                    $this->sourceConnection->getAccount(),
                 self::MIGRATION_SHARE_PREFIX . $database
             ));
         }
     }
 
-    public static function cloneDatabaseFromShared(
-        LoggerInterface $logger,
+    public function cloneDatabaseFromShared(
         Config $config,
-        Connection $sourceConnection,
-        Connection $destinationConnection,
         string $mainRole,
         array $databases,
-        array $grants
+        array $grants,
+        bool $isSynchronizeRun
     ): void {
         foreach ($databases as $database) {
-            $databaseRole = self::getMainRoleOnDatabase($sourceConnection, $database);
+            $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
             [
                 'databases' => $databaseGrants,
                 'schemas' => $schemasGrants,
@@ -124,63 +132,67 @@ class Command
                 'other' => $otherGrants,
             ] = Helper::parseGrantsToObjects($grants[$databaseRole]);
 
-            self::createRole(
-                $destinationConnection,
-                [
-                    'name' => $databaseRole,
-                    'granted_by' => $mainRole,
-                    'privilege' => 'OWNERSHIP',
-                ]
-            );
+            $this->destinationConnection->createRole([
+                'name' => $databaseRole,
+                'granted_by' => $mainRole,
+                'privilege' => 'OWNERSHIP',
+            ]);
             foreach ($accountGrants as $grant) {
-                self::assignGrantToRole($destinationConnection, $grant);
+                $this->destinationConnection->assignGrantToRole($grant);
+            }
+
+            if ($isSynchronizeRun) {
+                $this->destinationConnection->useRole('ACCOUNTADMIN');
+                $this->grantsPrivilegesToOldDatabase($database, $databaseRole);
+                $this->destinationConnection->useRole($mainRole);
             }
 
             foreach ($rolesGrants as $rolesGrant) {
                 if ($rolesGrant['privilege'] === 'OWNERSHIP') {
-                    self::createRole($destinationConnection, $rolesGrant);
+                    $this->destinationConnection->createRole($rolesGrant);
                 }
-                self::assignGrantToRole($destinationConnection, $rolesGrant);
+                $this->destinationConnection->assignGrantToRole($rolesGrant);
             }
 
             foreach ($userGrants as $userGrant) {
-                self::createUser($logger, $destinationConnection, $userGrant, $config->getPasswordOfUsers());
-                self::assignGrantToRole($destinationConnection, $userGrant);
+                self::createUser($userGrant, $config->getPasswordOfUsers());
+                $this->destinationConnection->assignGrantToRole($userGrant);
             }
 
             foreach ($warehouseGrants as $warehouseGrant) {
-                self::assignGrantToRole($destinationConnection, $warehouseGrant);
+                $this->destinationConnection->assignGrantToRole($warehouseGrant);
             }
 
-            self::useRole($destinationConnection, $mainRole);
+            $this->destinationConnection->useRole($mainRole);
 
             $shareDbName = $database . '_SHARE';
+            $oldDbName = $database . '_OLD';
 
-            $destinationConnection->query(sprintf(
+            $this->destinationConnection->query(sprintf(
                 'CREATE DATABASE %s;',
                 QueryBuilder::quoteIdentifier($database)
             ));
 
             foreach ($databaseGrants as $databaseGrant) {
                 if ($databaseGrant['privilege'] === 'OWNERSHIP') {
-                    self::assignGrantToRole(
-                        $destinationConnection,
-                        array_merge($databaseGrant, ['granted_by' => $mainRole])
-                    );
+                    $this->destinationConnection->assignGrantToRole(array_merge(
+                        $databaseGrant,
+                        ['granted_by' => $mainRole]
+                    ));
                 }
-                self::assignGrantToRole($destinationConnection, $databaseGrant);
+                $this->destinationConnection->assignGrantToRole($databaseGrant);
             }
 
-            self::assignSharePrivilegesToRole($destinationConnection, $database, $databaseRole);
+            self::assignSharePrivilegesToRole($database, $databaseRole);
 
-            self::useRole($destinationConnection, $databaseRole);
+            $this->destinationConnection->useRole($databaseRole);
 
-            $schemas = $destinationConnection->fetchAll(sprintf(
+            $schemas = $this->destinationConnection->fetchAll(sprintf(
                 'SHOW SCHEMAS IN DATABASE %s;',
                 QueryBuilder::quoteIdentifier($shareDbName)
             ));
 
-            foreach ($schemas as $k => $schema) {
+            foreach ($schemas as $schema) {
                 if (in_array($schema['name'], self::SKIP_CLONE_SCHEMAS)) {
                     continue;
                 }
@@ -205,18 +217,18 @@ class Command
                 $ownershipOnSchema = array_filter($schemaGrants, fn($v) => $v['privilege'] === 'OWNERSHIP');
                 assert(count($ownershipOnSchema) === 1);
 
-                self::useRole($destinationConnection, current($ownershipOnSchema)['granted_by']);
-                $destinationConnection->query(sprintf(
+                $this->destinationConnection->useRole(current($ownershipOnSchema)['granted_by']);
+                $this->destinationConnection->query(sprintf(
                     'CREATE SCHEMA %s.%s;',
                     QueryBuilder::quoteIdentifier($database),
                     QueryBuilder::quoteIdentifier($schemaName)
                 ));
 
                 foreach ($schemaGrants as $schemaGrant) {
-                    self::assignGrantToRole($destinationConnection, $schemaGrant);
+                    $this->destinationConnection->assignGrantToRole($schemaGrant);
                 }
 
-                $tables = $destinationConnection->fetchAll(sprintf(
+                $tables = $this->destinationConnection->fetchAll(sprintf(
                     'SHOW TABLES IN SCHEMA %s.%s;',
                     QueryBuilder::quoteIdentifier($shareDbName),
                     QueryBuilder::quoteIdentifier($schemaName)
@@ -272,40 +284,47 @@ class Command
                     $ownershipOnTable = current($ownershipOnTable);
 
                     self::assignSharePrivilegesToRole(
-                        $destinationConnection,
                         $database,
                         $ownershipOnTable['granted_by']
                     );
-                    self::useRole($destinationConnection, $ownershipOnTable['granted_by']);
+                    $this->destinationConnection->useRole($ownershipOnTable['granted_by']);
 
-                    $destinationConnection->query(sprintf(
-                        'CREATE TABLE %s.%s.%s AS SELECT * FROM %s.%s.%s;',
-                        QueryBuilder::quoteIdentifier($database),
-                        QueryBuilder::quoteIdentifier($schemaName),
-                        QueryBuilder::quoteIdentifier($tableName),
-                        QueryBuilder::quoteIdentifier($shareDbName),
-                        QueryBuilder::quoteIdentifier($schemaName),
-                        QueryBuilder::quoteIdentifier($tableName),
-                    ));
+                    if ($isSynchronizeRun) {
+                        $this->destinationConnection->query(sprintf(
+                            'CREATE TABLE %s.%s.%s AS SELECT * FROM %s.%s.%s;',
+                            QueryBuilder::quoteIdentifier($database),
+                            QueryBuilder::quoteIdentifier($schemaName),
+                            QueryBuilder::quoteIdentifier($tableName),
+                            QueryBuilder::quoteIdentifier($shareDbName),
+                            QueryBuilder::quoteIdentifier($schemaName),
+                            QueryBuilder::quoteIdentifier($tableName),
+                        ));
+                    } else {
+                        $this->destinationConnection->query(sprintf(
+                            'CREATE TABLE %s.%s.%s AS SELECT * FROM %s.%s.%s;',
+                            QueryBuilder::quoteIdentifier($database),
+                            QueryBuilder::quoteIdentifier($schemaName),
+                            QueryBuilder::quoteIdentifier($tableName),
+                            QueryBuilder::quoteIdentifier($shareDbName),
+                            QueryBuilder::quoteIdentifier($schemaName),
+                            QueryBuilder::quoteIdentifier($tableName),
+                        ));
+                    }
 
                     foreach ($tableGrants as $tableGrant) {
-                        self::assignGrantToRole($destinationConnection, $tableGrant);
+                        $this->destinationConnection->assignGrantToRole($tableGrant);
                     }
                 }
             }
         }
     }
 
-    public static function createUser(
-        LoggerInterface $logger,
-        Connection $connection,
-        array $userGrant,
-        array $passwordOfUsers
-    ): void {
-        self::useRole($connection, $userGrant['granted_by']);
+    public function createUser(array $userGrant, array $passwordOfUsers): void
+    {
+        $this->destinationConnection->useRole($userGrant['granted_by']);
 
         if (isset($passwordOfUsers[$userGrant['name']])) {
-            $connection->query(sprintf(
+            $this->destinationConnection->query(sprintf(
                 'CREATE USER %s PASSWORD=\'%s\' DEFAULT_ROLE = %s',
                 $userGrant['name'],
                 $passwordOfUsers[$userGrant['name']],
@@ -313,12 +332,12 @@ class Command
             ));
         } else {
             $password = Helper::generateRandomString();
-            $logger->alert(sprintf(
+            $this->logger->alert(sprintf(
                 'User "%s" has been created with password "%s". Please change it immediately!',
                 $userGrant['name'],
                 $password
             ));
-            $connection->query(sprintf(
+            $this->destinationConnection->query(sprintf(
                 'CREATE USER %s PASSWORD=\'%s\' DEFAULT_ROLE = %s MUST_CHANGE_PASSWORD = true',
                 $userGrant['name'],
                 $password,
@@ -327,48 +346,28 @@ class Command
         }
     }
 
-    public static function createRole(Connection $connection, array $role): void
-    {
-        assert($role['privilege'] === 'OWNERSHIP');
-
-        if (isset($role['granted_by'])) {
-            self::useRole($connection, $role['granted_by']);
-        }
-
-        $connection->query(sprintf(
-            'CREATE ROLE %s',
-            $role['name']
-        ));
-
-        self::grantRoleToUser(
-            $connection,
-            (string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'),
-            $role['name']
-        );
-    }
-
-    public static function exportUsersAndRolesGrants(Connection $connection, array $databases): array
+    public function exportUsersAndRolesGrants(array $databases): array
     {
         $tmp = [];
         foreach ($databases as $database) {
-            $databaseRole = self::getMainRoleOnDatabase($connection, $database);
+            $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
 
-            $roles = $connection->fetchAll(sprintf(
+            $roles = $this->sourceConnection->fetchAll(sprintf(
                 'SHOW ROLES LIKE %s',
                 QueryBuilder::quote($databaseRole)
             ));
 
-            $roles = self::getOtherRolesToMainProjectRole($connection, $roles);
+            $roles = $this->getOtherRolesToMainProjectRole($roles);
 
             foreach ($roles as $role) {
                 $tmp[$databaseRole][] = array_merge(
                     $role,
                     [
-                        'assignedGrants' => $connection->fetchAll(sprintf(
+                        'assignedGrants' => $this->sourceConnection->fetchAll(sprintf(
                             'SHOW GRANTS TO ROLE %s;',
                             $role['name']
                         )),
-                        'assignedFutureGrants' => $connection->fetchAll(sprintf(
+                        'assignedFutureGrants' => $this->sourceConnection->fetchAll(sprintf(
                             'SHOW FUTURE GRANTS TO ROLE %s;',
                             $role['name']
                         )),
@@ -379,77 +378,11 @@ class Command
         return $tmp;
     }
 
-    private static function getOtherRolesToMainProjectRole(
-        Connection $connection,
-        array $roles
-    ): array {
-        foreach ($roles as $role) {
-            $grantsToRole = $connection->fetchAll(sprintf(
-                'SHOW GRANTS TO ROLE %s;',
-                $role['name']
-            ));
-
-            $ownershipToRole = array_filter($grantsToRole, fn($v) => $v['privilege'] === 'OWNERSHIP');
-
-            $rolesInRole = array_filter($ownershipToRole, fn($v) => $v['granted_on'] === 'ROLE');
-            $filteredRolesInRole = array_filter($rolesInRole, fn($v) => !in_array($v['name'], $roles));
-            $roles = array_merge($roles, array_combine(
-                array_map(fn($v) => $v['name'], $filteredRolesInRole),
-                $filteredRolesInRole
-            ));
-        }
-
-        return $roles;
-    }
-
-    public static function grantRoleToUser(Connection $connection, string $user, string $role): void
+    public function createMainRole(array $mainRoleWithGrants, array $databases, array $users): void
     {
-        $connection->query(sprintf(
-            'GRANT ROLE %s TO USER %s',
-            QueryBuilder::quoteIdentifier($role),
-            QueryBuilder::quoteIdentifier($user)
-        ));
-    }
-
-    public static function assignGrantToRole(Connection $connection, array $grant): void
-    {
-        self::useRole($connection, $grant['granted_by']);
-
-        if ($grant['privilege'] === 'USAGE' && $grant['granted_on'] === 'ROLE') {
-            $sql = sprintf(
-                'GRANT %s %s TO %s %s %s',
-                $grant['granted_on'],
-                $grant['name'],
-                $grant['granted_to'],
-                $grant['grantee_name'],
-                $grant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
-            );
-        } else {
-            $sql = sprintf(
-                'GRANT %s ON %s %s TO %s %s %s',
-                $grant['privilege'],
-                $grant['granted_on'],
-                $grant['granted_on'] !== 'ACCOUNT' ? $grant['name'] : '',
-                $grant['granted_to'],
-                $grant['grantee_name'],
-                $grant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
-            );
-        }
-
-        $connection->query($sql);
-    }
-
-    public static function createMainRole(
-        LoggerInterface $logger,
-        Connection $connectionSourceProject,
-        Connection $connectionDestinationProject,
-        array $mainRoleWithGrants,
-        array $databases,
-        array $users
-    ): void {
         $user = $mainRole = $mainRoleWithGrants['name'];
 
-        self::createRole($connectionDestinationProject, ['name' => $mainRole, 'privilege' => 'OWNERSHIP']);
+        $this->destinationConnection->createRole(['name' => $mainRole, 'privilege' => 'OWNERSHIP']);
 
         $mainRoleGrants = [
             'GRANT CREATE DATABASE ON ACCOUNT TO ROLE %s;',
@@ -458,37 +391,33 @@ class Command
         ];
 
         foreach ($mainRoleGrants as $mainRoleGrant) {
-            $connectionDestinationProject->query(sprintf($mainRoleGrant, $mainRole));
+            $this->destinationConnection->query(sprintf($mainRoleGrant, $mainRole));
         }
 
         $warehouses = array_filter($mainRoleWithGrants['assignedGrants'], fn($v) => $v['granted_on'] === 'WAREHOUSE');
         $useWarehouse = false;
         foreach ($warehouses as $warehouse) {
-            $warehouseSize = self::createWarehouse(
-                $connectionSourceProject,
-                $connectionDestinationProject,
-                $warehouse
-            );
-            self::assignGrantToRole($connectionDestinationProject, $warehouse);
+            $warehouseSize = self::createWarehouse($warehouse);
+            $this->destinationConnection->assignGrantToRole($warehouse);
 
             if ($useWarehouse === false || $warehouseSize === 'X-Small') {
                 $useWarehouse = $warehouse;
             }
         }
 
-        $connectionDestinationProject->query(sprintf(
+        $this->destinationConnection->query(sprintf(
             'USE WAREHOUSE %s',
             QueryBuilder::quoteIdentifier($useWarehouse['name'])
         ));
 
-        $connectionDestinationProject->query(sprintf(
+        $this->destinationConnection->query(sprintf(
             'CREATE USER %s PASSWORD=%s DEFAULT_ROLE=%s',
             $user,
             QueryBuilder::quote($users[$user]),
             $mainRole
         ));
 
-        $connectionDestinationProject->query(sprintf(
+        $this->destinationConnection->query(sprintf(
             'GRANT ROLE %s TO USER %s;',
             $mainRole,
             $user
@@ -505,28 +434,28 @@ class Command
         });
 
         foreach ($projectUsers as $projectUser) {
-            self::createUser($logger, $connectionDestinationProject, $projectUser, $users);
-            self::assignGrantToRole($connectionDestinationProject, $projectUser);
+            self::createUser($projectUser, $users);
+            $this->destinationConnection->assignGrantToRole($projectUser);
         }
 
-        self::useRole($connectionDestinationProject, 'ACCOUNTADMIN');
+        $this->destinationConnection->useRole('ACCOUNTADMIN');
 
-        $connectionDestinationProject->query(sprintf(
+        $this->destinationConnection->query(sprintf(
             'GRANT ROLE %s TO ROLE SYSADMIN;',
             $mainRole
         ));
     }
 
-    public static function cleanupProject(Connection $connection): void
+    public function cleanupProject(): void
     {
-        self::useRole($connection, 'ACCOUNTADMIN');
+        $this->destinationConnection->useRole('ACCOUNTADMIN');
 
         $databases = [
             'SAPI_9472_OLD',
             'SAPI_9473_OLD',
         ];
         foreach ($databases as $database) {
-            $connection->query(sprintf(
+            $this->destinationConnection->query(sprintf(
                 'DROP DATABASE IF EXISTS %s;',
                 QueryBuilder::quoteIdentifier($database)
             ));
@@ -540,36 +469,23 @@ class Command
         ];
 
         foreach ($warehouses as $warehouse) {
-            $connection->query(sprintf(
+            $this->destinationConnection->query(sprintf(
                 'DROP WAREHOUSE IF EXISTS %s',
                 $warehouse
             ));
         }
 
-        $connection->query('DROP ROLE IF EXISTS KEBOOLA_STORAGE');
-        $connection->query('DROP USER IF EXISTS KEBOOLA_STORAGE');
+        $this->destinationConnection->query('DROP ROLE IF EXISTS KEBOOLA_STORAGE');
+        $this->destinationConnection->query('DROP USER IF EXISTS KEBOOLA_STORAGE');
     }
 
-    private static function assignSharePrivilegesToRole(Connection $connection, string $database, string $role): void
-    {
-        self::assignGrantToRole($connection, [
-            'privilege' => 'IMPORTED PRIVILEGES',
-            'granted_on' => 'DATABASE',
-            'name' => $database . '_SHARE',
-            'granted_to' => 'ROLE',
-            'grantee_name' => $role,
-            'grant_option' => 'false',
-            'granted_by' => 'ACCOUNTADMIN',
-        ]);
-    }
-
-    public static function getMainRoleWithGrants(Connection $connection, array $databases): array
+    public function getMainRoleWithGrants(array $databases): array
     {
         $grantsOfRoles = [];
         foreach ($databases as $database) {
-            $roleName = self::getMainRoleOnDatabase($connection, $database);
+            $roleName = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
 
-            $grantedOnDatabaseRole = $connection->fetchAll(sprintf(
+            $grantedOnDatabaseRole = $this->sourceConnection->fetchAll(sprintf(
                 'SHOW GRANTS ON ROLE %s',
                 $roleName
             ));
@@ -589,19 +505,16 @@ class Command
 
         return [
             'name' => $mainRole,
-            'assignedGrants' => $connection->fetchAll(sprintf(
+            'assignedGrants' => $this->sourceConnection->fetchAll(sprintf(
                 'SHOW GRANTS TO ROLE %s;',
                 $mainRole
             )),
         ];
     }
 
-    private static function createWarehouse(
-        Connection $connectionSourceProject,
-        Connection $connectionDestinationProject,
-        array $warehouse
-    ): string {
-        $warehouseInfo = $connectionSourceProject->fetchAll(sprintf(
+    private function createWarehouse(array $warehouse): string
+    {
+        $warehouseInfo = $this->sourceConnection->fetchAll(sprintf(
             'SHOW WAREHOUSES LIKE %s',
             QueryBuilder::quote($warehouse['name'])
         ));
@@ -635,20 +548,17 @@ SQL;
                 '',
         );
 
-        $connectionDestinationProject->query($sql);
+        $this->destinationConnection->query($sql);
 
         return $warehouseInfo['size'];
     }
 
-    public static function grantRoleToUsers(
-        Connection $sourceConnection,
-        Connection $destinationConnection,
-        string $mainUser
-    ): void {
-        self::useRole($destinationConnection, 'ACCOUNTADMIN');
-        self::useRole($sourceConnection, 'ACCOUNTADMIN');
+    public function grantRoleToUsers(string $mainUser): void
+    {
+        $this->destinationConnection->useRole('ACCOUNTADMIN');
+        $this->sourceConnection->useRole('ACCOUNTADMIN');
 
-        $users = $destinationConnection->fetchAll('SHOW USERS');
+        $users = $this->destinationConnection->fetchAll('SHOW USERS');
 
         $filteredUsers = array_filter($users, function ($v) use ($mainUser) {
             if ($v['owner'] === 'ACCOUNTADMIN' && $v['name'] !== $mainUser) {
@@ -661,14 +571,14 @@ SQL;
         });
 
         foreach ($filteredUsers as $filteredUser) {
-            $grants = $sourceConnection->fetchAll(sprintf(
+            $grants = $this->sourceConnection->fetchAll(sprintf(
                 'SHOW GRANTS TO USER %s',
                 QueryBuilder::quoteIdentifier($filteredUser['name'])
             ));
 
             foreach ($grants as $grant) {
-                self::useRole($destinationConnection, $grant['granted_by']);
-                $destinationConnection->query(sprintf(
+                $this->destinationConnection->useRole($grant['granted_by']);
+                $this->destinationConnection->query(sprintf(
                     'GRANT ROLE %s TO %s %s',
                     $grant['role'],
                     $grant['granted_to'],
@@ -678,30 +588,20 @@ SQL;
         }
     }
 
-    private static function getMainRoleOnDatabase(Connection $connection, string $database): string
+    public function cleanupAccount(array $databases, bool $dryRun = true): void
     {
-        $grantsOnDatabase = $connection->fetchAll(sprintf(
-            'SHOW GRANTS ON DATABASE %s',
-            $database
-        ));
-
-        $ownershipOnDatabase = array_filter($grantsOnDatabase, fn($v) => $v['privilege'] === 'OWNERSHIP');
-        assert(count($ownershipOnDatabase) === 1);
-
-        return current($ownershipOnDatabase)['grantee_name'];
-    }
-
-    public static function cleanupAccount(
-        LoggerInterface $logger,
-        Connection $connection,
-        array $databases,
-        bool $dryRun = true
-    ): void {
         $sqls = [];
         $currentRole = 'ACCOUNTADMIN';
         foreach ($databases as $database) {
-            $databaseRole = self::getMainRoleOnDatabase($connection, $database);
-            $data = self::getDataToRemove($connection, $databaseRole);
+            $dbExists = $this->destinationConnection->fetchAll(sprintf(
+                'SHOW DATABASES LIKE %s',
+                QueryBuilder::quote($database)
+            ));
+            if (!$dbExists) {
+                continue;
+            }
+            $databaseRole = $this->destinationConnection->getOwnershipRoleOnDatabase($database);
+            $data = self::getDataToRemove($databaseRole);
 
             foreach ($data['USER'] ?? [] as $user) {
                 if ($user['granted_by'] !== $currentRole) {
@@ -719,7 +619,7 @@ SQL;
                 $sqls[] = sprintf('DROP ROLE IF EXISTS %s;', $user['name']);
             }
 
-            $grantsOfRole = $connection->fetchAll(sprintf('SHOW GRANTS OF ROLE %s', $databaseRole));
+            $grantsOfRole = $this->destinationConnection->fetchAll(sprintf('SHOW GRANTS OF ROLE %s', $databaseRole));
             $filteredGrantsOfRole = array_filter(
                 $grantsOfRole,
                 fn($v) => strtoupper($v['grantee_name']) === strtoupper($databaseRole)
@@ -749,16 +649,50 @@ SQL;
 
         foreach ($sqls as $sql) {
             if ($dryRun) {
-                $logger->info($sql);
+                $this->logger->info($sql);
             } else {
-                $connection->query($sql);
+                $this->destinationConnection->query($sql);
             }
         }
     }
 
-    private static function getDataToRemove(Connection $connection, string $role): array
+    private function getOtherRolesToMainProjectRole(array $roles): array
     {
-        $grants = $connection->fetchAll(sprintf(
+        foreach ($roles as $role) {
+            $grantsToRole = $this->sourceConnection->fetchAll(sprintf(
+                'SHOW GRANTS TO ROLE %s;',
+                $role['name']
+            ));
+
+            $ownershipToRole = array_filter($grantsToRole, fn($v) => $v['privilege'] === 'OWNERSHIP');
+
+            $rolesInRole = array_filter($ownershipToRole, fn($v) => $v['granted_on'] === 'ROLE');
+            $filteredRolesInRole = array_filter($rolesInRole, fn($v) => !in_array($v['name'], $roles));
+            $roles = array_merge($roles, array_combine(
+                array_map(fn($v) => $v['name'], $filteredRolesInRole),
+                $filteredRolesInRole
+            ));
+        }
+
+        return $roles;
+    }
+
+    private function assignSharePrivilegesToRole(string $database, string $role): void
+    {
+        $this->destinationConnection->assignGrantToRole([
+            'privilege' => 'IMPORTED PRIVILEGES',
+            'granted_on' => 'DATABASE',
+            'name' => $database . '_SHARE',
+            'granted_to' => 'ROLE',
+            'grantee_name' => $role,
+            'grant_option' => 'false',
+            'granted_by' => 'ACCOUNTADMIN',
+        ]);
+    }
+
+    private function getDataToRemove(string $role): array
+    {
+        $grants = $this->destinationConnection->fetchAll(sprintf(
             'SHOW GRANTS TO ROLE %s',
             QueryBuilder::quoteIdentifier($role)
         ));
@@ -779,12 +713,44 @@ SQL;
             $roleGrants = $mapGrants['ROLE'];
             foreach ($roleGrants as $roleGrant) {
                 $mapGrants = array_merge_recursive(
-                    self::getDataToRemove($connection, $roleGrant['name']),
+                    self::getDataToRemove($roleGrant['name']),
                     $mapGrants,
                 );
             }
         }
 
         return $mapGrants;
+    }
+
+    private function grantsPrivilegesToOldDatabase(string $database, string $databaseRole): void
+    {
+        $dbExists = $this->destinationConnection->fetchAll(sprintf(
+            'SHOW DATABASES LIKE %s',
+            QueryBuilder::quote($database . '_OLD')
+        ));
+        if (!$dbExists) {
+            return;
+        }
+        $sqls = [
+            sprintf(
+                'grant all on database %s to role %s;',
+                QueryBuilder::quoteIdentifier($database . '_OLD'),
+                $databaseRole
+            ),
+            sprintf(
+                'grant all on all schemas in database %s to role %s;',
+                QueryBuilder::quoteIdentifier($database . '_OLD'),
+                $databaseRole
+            ),
+            sprintf(
+                'grant all on all tables in database %s to role %s;',
+                QueryBuilder::quoteIdentifier($database . '_OLD'),
+                $databaseRole
+            ),
+        ];
+
+        foreach ($sqls as $sql) {
+            $this->destinationConnection->query($sql);
+        }
     }
 }

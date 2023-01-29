@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace ProjectMigrationTool\Snowflake;
 
-use Keboola\SnowflakeDbAdapter\Connection;
-
 class ConnectionFactory
 {
     public static function create(string $typeConnection, ?string $user = null, ?string $password = null): Connection

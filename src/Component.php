@@ -7,9 +7,7 @@ namespace ProjectMigrationTool;
 use Keboola\Component\BaseComponent;
 use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Configuration\ConfigDefinition;
-use ProjectMigrationTool\Snowflake\Command;
 use ProjectMigrationTool\Snowflake\ConnectionFactory;
-use ProjectMigrationTool\Snowflake\Helper;
 
 class Component extends BaseComponent
 {
@@ -24,69 +22,59 @@ class Component extends BaseComponent
         $destinationSnflkConnection = ConnectionFactory::create('destination');
 
 //        Switch to accountadmin role
-        Command::useRole($sourceSnflkConnection, 'ACCOUNTADMIN');
-        Command::useRole($migrateSnflkConnection, 'ACCOUNTADMIN');
-        Command::useRole($destinationSnflkConnection, 'ACCOUNTADMIN');
+        $sourceSnflkConnection->useRole('ACCOUNTADMIN');
+        $migrateSnflkConnection->useRole('ACCOUNTADMIN');
+        $destinationSnflkConnection->useRole('ACCOUNTADMIN');
+
+        $migrate = new Migrate(
+            $this->getLogger(),
+            $sourceSnflkConnection,
+            $migrateSnflkConnection,
+            $destinationSnflkConnection
+        );
 
 //        Cleanup destination account
         if ($this->getConfig()->getSynchronizeRun()) {
-            Command::cleanupAccount(
-                $this->getLogger(),
-                $destinationSnflkConnection,
-                $databases,
-                $this->getConfig()->getSynchronizeDryRun()
-            );
+            $migrate->cleanupAccount($databases, $this->getConfig()->getSynchronizeDryRun());
         }
-
-        Command::cleanupProject($destinationSnflkConnection);
+        $migrate->cleanupProject();
 
 //        Export grants from source database
-        $rolesGrants = Command::exportUsersAndRolesGrants($sourceSnflkConnection, $databases);
+        $rolesGrants = $migrate->exportUsersAndRolesGrants($databases);
 
 //        Get main role
-        $mainRoleWithGrants = Command::getMainRoleWithGrants($sourceSnflkConnection, $databases);
+        $mainRoleWithGrants = $migrate->getMainRoleWithGrants($databases);
 
 //        Create MainRole in destination anflk account
-        Command::createMainRole(
-            $this->getLogger(),
-            $sourceSnflkConnection,
-            $destinationSnflkConnection,
+        $migrate->createMainRole(
             $mainRoleWithGrants,
             $databases,
             $this->getConfig()->getPasswordOfUsers()
         );
 
         $this->getLogger()->info('Check region of databases.');
-        $sourceRegion = Command::getRegion($sourceSnflkConnection);
-        $destinationRegion = Command::getRegion($destinationSnflkConnection);
-
-        $destinationAccount = Command::getAccount($destinationSnflkConnection);
+        $sourceRegion = $sourceSnflkConnection->getRegion();
+        $destinationRegion = $destinationSnflkConnection->getRegion();
 
         if ($sourceRegion === $destinationRegion) {
             $this->getLogger()->info('Source and destination region is the same.');
 
-            $sourceAccount = Command::getAccount($sourceSnflkConnection);
-
-            Command::createShare($sourceSnflkConnection, $databases, $destinationAccount);
+            $migrate->createShare($databases);
         } else {
-            $sourceAccount = Command::getAccount($migrateSnflkConnection);
-
             // @TODO create replication and share from migration account
         }
 
 //        create and clone databases from shares
-        Command::createDatabasesFromShares($destinationSnflkConnection, $databases, $sourceAccount);
-        Command::cloneDatabaseFromShared(
-            $this->getLogger(),
+        $migrate->createDatabasesFromShares($databases);
+        $migrate->cloneDatabaseFromShared(
             $this->getConfig(),
-            $sourceSnflkConnection,
-            $destinationSnflkConnection,
             $mainRoleWithGrants['name'],
             $databases,
-            $rolesGrants
+            $rolesGrants,
+            $this->getConfig()->getSynchronizeRun()
         );
 
-        Command::grantRoleToUsers($sourceSnflkConnection, $destinationSnflkConnection, $mainRoleWithGrants['name']);
+        $migrate->grantRoleToUsers($mainRoleWithGrants['name']);
     }
 
     public function getConfig(): Config
