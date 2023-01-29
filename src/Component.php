@@ -28,14 +28,23 @@ class Component extends BaseComponent
         Command::useRole($migrateSnflkConnection, 'ACCOUNTADMIN');
         Command::useRole($destinationSnflkConnection, 'ACCOUNTADMIN');
 
+//        Cleanup destination account
+        if ($this->getConfig()->getSynchronizeRun()) {
+            Command::cleanupAccount(
+                $this->getLogger(),
+                $destinationSnflkConnection,
+                $databases,
+                $this->getConfig()->getSynchronizeDryRun()
+            );
+        }
+
+        Command::cleanupProject($destinationSnflkConnection);
+
 //        Export grants from source database
         $rolesGrants = Command::exportUsersAndRolesGrants($sourceSnflkConnection, $databases);
 
 //        Get main role
         $mainRoleWithGrants = Command::getMainRoleWithGrants($sourceSnflkConnection, $databases);
-
-//        Cleanup destination account
-        Command::cleanupProject($destinationSnflkConnection);
 
 //        Create MainRole in destination anflk account
         Command::createMainRole(
@@ -46,27 +55,6 @@ class Component extends BaseComponent
             $databases,
             $this->getConfig()->getPasswordOfUsers()
         );
-
-        [
-            'databases' => $databasedatabaseGrants,
-            'schemas' => $databaseschemasGrants,
-            'tables' => $databasetablesGrants,
-            'roles' => $databaserolesGrants,
-            'account' => $databaseaccountGrants,
-            'warehouse' => $databasewarehouseGrants,
-            'user' => $databaseuserGrants,
-            'other' => $databaseotherGrants,
-        ] = Helper::parseGrantsToObjects($rolesGrants['SAPI_9472']);
-
-        file_put_contents('data/account.json', json_encode($databaseaccountGrants));
-        file_put_contents('data/grants.json', json_encode($rolesGrants));
-        file_put_contents('data/databaseGrants.json', json_encode($databasedatabaseGrants));
-        file_put_contents('data/schemasGrants.json', json_encode($databaseschemasGrants));
-        file_put_contents('data/tablesGrants.json', json_encode($databasetablesGrants));
-        file_put_contents('data/rolesGrants.json', json_encode($databaserolesGrants));
-        file_put_contents('data/otherGrants.json', json_encode($databaseotherGrants));
-        file_put_contents('data/userGrants.json', json_encode($databaseuserGrants));
-        file_put_contents('data/warehouseGrants.json', json_encode($databasewarehouseGrants));
 
         $this->getLogger()->info('Check region of databases.');
         $sourceRegion = Command::getRegion($sourceSnflkConnection);

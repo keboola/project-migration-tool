@@ -519,44 +519,11 @@ class Command
 
     public static function cleanupProject(Connection $connection): void
     {
-        try {
-            self::useRole($connection, 'SAPI_9472');
-            $dropRoles = [
-                'SAPI_9472_1073748_SHARE',
-                'SAPI_9472_1073763_SHARE',
-                'SAPI_9472_1075089_SHARE',
-                'SAPI_9472_RO',
-                'SAPI_WORKSPACE_941797557',
-                'SAPI_WORKSPACE_942116815',
-            ];
-
-            foreach ($dropRoles as $dropRole) {
-                $connection->query(sprintf(
-                    'DROP ROLE IF EXISTS %s',
-                    $dropRole
-                ));
-            }
-        } catch (CannotAccessObjectException $e) {
-            var_dump($e->getMessage());
-        }
-
         self::useRole($connection, 'ACCOUNTADMIN');
-        $dropRoles = [
-            'SAPI_9472',
-            'SAPI_9473',
-            'KEBOOLA_STORAGE',
-        ];
-
-        foreach ($dropRoles as $dropRole) {
-            $connection->query(sprintf(
-                'DROP ROLE IF EXISTS %s',
-                $dropRole
-            ));
-        }
 
         $databases = [
-            'SAPI_9472',
-            'SAPI_9473',
+            'SAPI_9472_OLD',
+            'SAPI_9473_OLD',
         ];
         foreach ($databases as $database) {
             $connection->query(sprintf(
@@ -579,41 +546,8 @@ class Command
             ));
         }
 
-        $users = [
-            'SAPI_WORKSPACE_941797557',
-            'SAPI_WORKSPACE_942116815',
-            'SAPI_9472',
-            'SAPI_9473',
-            'KEBOOLA_STORAGE',
-        ];
-
-        foreach ($users as $user) {
-            $connection->query(sprintf(
-                'DROP USER IF EXISTS %s',
-                $user
-            ));
-        }
-
-        $roles = [
-            'SAPI_9472',
-            'SAPI_9472_1073748_SHARE',
-            'SAPI_9472_1073763_SHARE',
-            'SAPI_9472_1075089_SHARE',
-            'SAPI_9472_RO',
-            'SAPI_9473',
-            'SAPI_9474',
-            'SAPI_9475',
-            'SAPI_9476',
-            'SAPI_WORKSPACE_941797557',
-            'SAPI_WORKSPACE_942116815',
-        ];
-
-        foreach ($roles as $role) {
-            $connection->query(sprintf(
-                'DROP ROLE IF EXISTS %s',
-                $role
-            ));
-        }
+        $connection->query('DROP ROLE IF EXISTS KEBOOLA_STORAGE');
+        $connection->query('DROP USER IF EXISTS KEBOOLA_STORAGE');
     }
 
     private static function assignSharePrivilegesToRole(Connection $connection, string $database, string $role): void
@@ -755,5 +689,102 @@ SQL;
         assert(count($ownershipOnDatabase) === 1);
 
         return current($ownershipOnDatabase)['grantee_name'];
+    }
+
+    public static function cleanupAccount(
+        LoggerInterface $logger,
+        Connection $connection,
+        array $databases,
+        bool $dryRun = true
+    ): void {
+        $sqls = [];
+        $currentRole = 'ACCOUNTADMIN';
+        foreach ($databases as $database) {
+            $databaseRole = self::getMainRoleOnDatabase($connection, $database);
+            $data = self::getDataToRemove($connection, $databaseRole);
+
+            foreach ($data['USER'] ?? [] as $user) {
+                if ($user['granted_by'] !== $currentRole) {
+                    $currentRole = $user['granted_by'];
+                    $sqls[] = sprintf('USE ROLE %s;', $currentRole);
+                }
+                $sqls[] = sprintf('DROP USER IF EXISTS %s;', $user['name']);
+            }
+
+            foreach ($data['ROLE'] ?? [] as $user) {
+                if ($user['granted_by'] !== $currentRole) {
+                    $currentRole = $user['granted_by'];
+                    $sqls[] = sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($currentRole));
+                }
+                $sqls[] = sprintf('DROP ROLE IF EXISTS %s;', $user['name']);
+            }
+
+            $grantsOfRole = $connection->fetchAll(sprintf('SHOW GRANTS OF ROLE %s', $databaseRole));
+            $filteredGrantsOfRole = array_filter(
+                $grantsOfRole,
+                fn($v) => strtoupper($v['grantee_name']) === strtoupper($databaseRole)
+            );
+            assert(count($filteredGrantsOfRole) === 1);
+            $grantOfRole = current($grantsOfRole);
+            if ($grantOfRole['granted_by'] !== $currentRole) {
+                $currentRole = $grantOfRole['granted_by'];
+                $sqls[] = sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($currentRole));
+            }
+            $sqls[] = sprintf(
+                'DROP USER IF EXISTS %s;',
+                QueryBuilder::quoteIdentifier($grantOfRole['grantee_name'])
+            );
+            $sqls[] = sprintf('DROP ROLE IF EXISTS %s;', QueryBuilder::quoteIdentifier($databaseRole));
+
+            if ($currentRole !== 'ACCOUNTADMIN') {
+                $currentRole = 'ACCOUNTADMIN';
+                $sqls[] = sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($currentRole));
+            }
+            $sqls[] = sprintf(
+                'ALTER DATABASE IF EXISTS %s RENAME TO %s;',
+                QueryBuilder::quoteIdentifier($database),
+                QueryBuilder::quoteIdentifier($database . '_OLD'),
+            );
+        }
+
+        foreach ($sqls as $sql) {
+            if ($dryRun) {
+                $logger->info($sql);
+            } else {
+                $connection->query($sql);
+            }
+        }
+    }
+
+    private static function getDataToRemove(Connection $connection, string $role): array
+    {
+        $grants = $connection->fetchAll(sprintf(
+            'SHOW GRANTS TO ROLE %s',
+            QueryBuilder::quoteIdentifier($role)
+        ));
+
+        $filteredGrants = array_filter($grants, function ($v) {
+            $usageWarehouse = $v['privilege'] === 'USAGE' && $v['granted_on'] === 'WAREHOUSE';
+            $ownership = $v['privilege'] === 'OWNERSHIP' && (in_array($v['granted_on'], ['USER', 'ROLE']));
+
+            return $ownership || $usageWarehouse;
+        });
+
+        $mapGrants = [];
+        foreach ($filteredGrants as $filteredGrant) {
+            $mapGrants[$filteredGrant['granted_on']][$filteredGrant['name']] = $filteredGrant;
+        }
+
+        if (isset($mapGrants['ROLE'])) {
+            $roleGrants = $mapGrants['ROLE'];
+            foreach ($roleGrants as $roleGrant) {
+                $mapGrants = array_merge_recursive(
+                    self::getDataToRemove($connection, $roleGrant['name']),
+                    $mapGrants,
+                );
+            }
+        }
+
+        return $mapGrants;
     }
 }
