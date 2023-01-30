@@ -39,7 +39,7 @@ class Component extends BaseComponent
         }
 
 //        !!!! !!!!! REMOVE ME !!!!! !!!!
-        $migrate->cleanupProject();
+//        $migrate->cleanupProject();
 
 //        Export grants from source database
         $rolesGrants = $migrate->exportUsersAndRolesGrants($databases);

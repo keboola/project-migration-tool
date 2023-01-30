@@ -417,7 +417,7 @@ class Migrate
         ));
 
         $this->destinationConnection->query(sprintf(
-            'CREATE USER %s PASSWORD=%s DEFAULT_ROLE=%s',
+            'CREATE USER IF NOT EXISTS %s PASSWORD=%s DEFAULT_ROLE=%s',
             $user,
             QueryBuilder::quote($users[$user]),
             $mainRole
@@ -454,6 +454,7 @@ class Migrate
 
     public function cleanupProject(): void
     {
+        // !!!!! TESTING METHOD !!!!!!!
         $this->destinationConnection->useRole('ACCOUNTADMIN');
 
         $databases = [
@@ -529,7 +530,7 @@ class Migrate
         $warehouseInfo = current($warehouseInfo);
 
         $sqlTemplate = <<<SQL
-CREATE WAREHOUSE %s
+CREATE WAREHOUSE IF NOT EXISTS %s
     WITH WAREHOUSE_SIZE = %s
         WAREHOUSE_TYPE = %s
         AUTO_SUSPEND = %s

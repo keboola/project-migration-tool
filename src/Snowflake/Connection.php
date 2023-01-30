@@ -61,7 +61,7 @@ class Connection extends AdapterConnection
             $this->useRole($role['granted_by']);
         }
 
-        $this->query(sprintf('CREATE ROLE %s', $role['name']));
+        $this->query(sprintf('CREATE ROLE IF NOT EXISTS %s', $role['name']));
 
         $this->grantRoleToUser((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'), $role['name']);
     }
