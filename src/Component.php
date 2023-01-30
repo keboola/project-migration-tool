@@ -37,6 +37,8 @@ class Component extends BaseComponent
         if ($this->getConfig()->getSynchronizeRun()) {
             $migrate->cleanupAccount($databases, $this->getConfig()->getSynchronizeDryRun());
         }
+
+//        !!!! !!!!! REMOVE ME !!!!! !!!!
         $migrate->cleanupProject();
 
 //        Export grants from source database
@@ -62,6 +64,14 @@ class Component extends BaseComponent
             $migrate->createShare($databases);
         } else {
             // @TODO create replication and share from migration account
+//            Source database sqls:
+//            alter database KEBOOLA_3705 enable replication to accounts AWS_US_EAST_1.ILB37160;
+
+//            Migration database sqls:
+//            create database KEBOOLA_3705_REPLICA as replica of AWS_EU_CENTRAL_1.FR61401.KEBOOLA_3705;
+//            use database KEBOOLA_3705_REPLICA;
+//            use schema PUBLIC;
+//            alter database KEBOOLA_3705_REPLICA refresh;
         }
 
 //        create and clone databases from shares

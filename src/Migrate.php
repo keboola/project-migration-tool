@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ProjectMigrationTool;
 
+use Keboola\SnowflakeDbAdapter\Exception\CannotAccessObjectException;
 use Keboola\SnowflakeDbAdapter\QueryBuilder;
 use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Snowflake\Connection;
@@ -142,14 +143,15 @@ class Migrate
             }
 
             if ($isSynchronizeRun) {
-                $this->destinationConnection->useRole('ACCOUNTADMIN');
                 $this->grantsPrivilegesToOldDatabase($database, $databaseRole);
-                $this->destinationConnection->useRole($mainRole);
             }
 
             foreach ($rolesGrants as $rolesGrant) {
                 if ($rolesGrant['privilege'] === 'OWNERSHIP') {
                     $this->destinationConnection->createRole($rolesGrant);
+                    if ($isSynchronizeRun) {
+                        $this->grantsPrivilegesToOldDatabase($database, $rolesGrant['name']);
+                    }
                 }
                 $this->destinationConnection->assignGrantToRole($rolesGrant);
             }
@@ -197,6 +199,8 @@ class Migrate
                     continue;
                 }
                 $schemaName = $schema['name'];
+
+                $this->logger->info(sprintf('Migrate schema "%s".', $schemaName));
 
                 $schemaGrants = array_filter(
                     $schemasGrants,
@@ -289,17 +293,19 @@ class Migrate
                     );
                     $this->destinationConnection->useRole($ownershipOnTable['granted_by']);
 
-                    if ($isSynchronizeRun) {
+                    if ($this->canCloneTable($database, $schemaName, $tableName)) {
+                        $this->logger->info(sprintf('Clone table "%s" from OLD database', $tableName));
                         $this->destinationConnection->query(sprintf(
-                            'CREATE TABLE %s.%s.%s AS SELECT * FROM %s.%s.%s;',
+                            'CREATE TABLE %s.%s.%s CLONE %s.%s.%s;',
                             QueryBuilder::quoteIdentifier($database),
                             QueryBuilder::quoteIdentifier($schemaName),
                             QueryBuilder::quoteIdentifier($tableName),
-                            QueryBuilder::quoteIdentifier($shareDbName),
+                            QueryBuilder::quoteIdentifier($oldDbName),
                             QueryBuilder::quoteIdentifier($schemaName),
                             QueryBuilder::quoteIdentifier($tableName),
                         ));
                     } else {
+                        $this->logger->info(sprintf('Create table "%s" from SHARE database', $tableName));
                         $this->destinationConnection->query(sprintf(
                             'CREATE TABLE %s.%s.%s AS SELECT * FROM %s.%s.%s;',
                             QueryBuilder::quoteIdentifier($database),
@@ -640,6 +646,12 @@ SQL;
                 $currentRole = 'ACCOUNTADMIN';
                 $sqls[] = sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($currentRole));
             }
+
+            $sqls[] = sprintf(
+                'DROP DATABASE IF EXISTS %s',
+                QueryBuilder::quoteIdentifier($database . '_OLD')
+            );
+
             $sqls[] = sprintf(
                 'ALTER DATABASE IF EXISTS %s RENAME TO %s;',
                 QueryBuilder::quoteIdentifier($database),
@@ -722,8 +734,34 @@ SQL;
         return $mapGrants;
     }
 
+    private function canCloneTable(string $database, string $schema, string $table): bool
+    {
+        $sqlTemplate = 'SELECT max("_timestamp") as "maxTimestamp" FROM %s.%s.%s';
+
+        try {
+            $lastUpdateTableInOldDatabase = $this->destinationConnection->fetchAll(sprintf(
+                $sqlTemplate,
+                QueryBuilder::quoteIdentifier($database . '_OLD'),
+                QueryBuilder::quoteIdentifier($schema),
+                QueryBuilder::quoteIdentifier($table)
+            ));
+            $lastUpdateTableInShareDatabase = $this->destinationConnection->fetchAll(sprintf(
+                $sqlTemplate,
+                QueryBuilder::quoteIdentifier($database . '_SHARE'),
+                QueryBuilder::quoteIdentifier($schema),
+                QueryBuilder::quoteIdentifier($table)
+            ));
+        } catch (CannotAccessObjectException $e) {
+            return false;
+        }
+
+        return $lastUpdateTableInOldDatabase[0]['maxTimestamp'] === $lastUpdateTableInShareDatabase[0]['maxTimestamp'];
+    }
+
     private function grantsPrivilegesToOldDatabase(string $database, string $databaseRole): void
     {
+        $currentRole = $this->destinationConnection->getCurrentRole();
+        $this->destinationConnection->useRole('ACCOUNTADMIN');
         $dbExists = $this->destinationConnection->fetchAll(sprintf(
             'SHOW DATABASES LIKE %s',
             QueryBuilder::quote($database . '_OLD')
@@ -752,5 +790,6 @@ SQL;
         foreach ($sqls as $sql) {
             $this->destinationConnection->query($sql);
         }
+        $this->destinationConnection->useRole($currentRole);
     }
 }

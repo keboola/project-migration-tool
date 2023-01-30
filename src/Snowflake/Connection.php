@@ -46,6 +46,13 @@ class Connection extends AdapterConnection
         return $this->account;
     }
 
+    public function getCurrentRole(): string
+    {
+        $role = $this->fetchAll('SELECT CURRENT_ROLE() AS "role";');
+
+        return $role[0]['role'];
+    }
+
     public function createRole(array $role): void
     {
         assert($role['privilege'] === 'OWNERSHIP');
