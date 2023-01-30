@@ -38,6 +38,12 @@ class Component extends BaseComponent
             $migrate->cleanupAccount($databases, $this->getConfig()->getSynchronizeDryRun());
         }
 
+//        Create DB replication
+        if ($sourceSnflkConnection->getRegion() !== $destinationSnflkConnection->getRegion()) {
+            $this->getLogger()->info('Creating replication.');
+            $migrate->createReplication($databases);
+        }
+
 //        !!!! !!!!! REMOVE ME !!!!! !!!!
 //        $migrate->cleanupProject();
 
@@ -54,25 +60,8 @@ class Component extends BaseComponent
             $this->getConfig()->getPasswordOfUsers()
         );
 
-        $this->getLogger()->info('Check region of databases.');
-        $sourceRegion = $sourceSnflkConnection->getRegion();
-        $destinationRegion = $destinationSnflkConnection->getRegion();
-
-        if ($sourceRegion === $destinationRegion) {
-            $this->getLogger()->info('Source and destination region is the same.');
-
-            $migrate->createShare($databases);
-        } else {
-            // @TODO create replication and share from migration account
-//            Source database sqls:
-//            alter database KEBOOLA_3705 enable replication to accounts AWS_US_EAST_1.ILB37160;
-
-//            Migration database sqls:
-//            create database KEBOOLA_3705_REPLICA as replica of AWS_EU_CENTRAL_1.FR61401.KEBOOLA_3705;
-//            use database KEBOOLA_3705_REPLICA;
-//            use schema PUBLIC;
-//            alter database KEBOOLA_3705_REPLICA refresh;
-        }
+//        Create sharing
+        $migrate->createShare($databases);
 
 //        create and clone databases from shares
         $migrate->createDatabasesFromShares($databases);

@@ -28,6 +28,8 @@ class Migrate
         'PUBLIC',
     ];
 
+    private array $usedUsers = [];
+
     public function __construct(
         LoggerInterface $logger,
         Connection $sourceConnection,
@@ -329,6 +331,10 @@ class Migrate
     {
         $this->destinationConnection->useRole($userGrant['granted_by']);
 
+        if (!in_array($userGrant['name'], $this->usedUsers)) {
+            $this->usedUsers[] = $userGrant['name'];
+        }
+
         if (isset($passwordOfUsers[$userGrant['name']])) {
             $this->destinationConnection->query(sprintf(
                 'CREATE USER %s PASSWORD=\'%s\' DEFAULT_ROLE = %s',
@@ -565,22 +571,10 @@ SQL;
         $this->destinationConnection->useRole('ACCOUNTADMIN');
         $this->sourceConnection->useRole('ACCOUNTADMIN');
 
-        $users = $this->destinationConnection->fetchAll('SHOW USERS');
-
-        $filteredUsers = array_filter($users, function ($v) use ($mainUser) {
-            if ($v['owner'] === 'ACCOUNTADMIN' && $v['name'] !== $mainUser) {
-                return false;
-            }
-            if ($v['owner'] === '') {
-                return false;
-            }
-            return true;
-        });
-
-        foreach ($filteredUsers as $filteredUser) {
+        foreach ($this->usedUsers as $user) {
             $grants = $this->sourceConnection->fetchAll(sprintf(
                 'SHOW GRANTS TO USER %s',
-                QueryBuilder::quoteIdentifier($filteredUser['name'])
+                QueryBuilder::quoteIdentifier($user)
             ));
 
             foreach ($grants as $grant) {
@@ -792,5 +786,56 @@ SQL;
             $this->destinationConnection->query($sql);
         }
         $this->destinationConnection->useRole($currentRole);
+    }
+
+    public function createReplication(array $databases): void
+    {
+        foreach ($databases as $database) {
+//            Allow replication on source database
+            $this->sourceConnection->query(sprintf(
+                'ALTER DATABASE %s ENABLE REPLICATION TO ACCOUNTS %s.%s;',
+                QueryBuilder::quoteIdentifier($database),
+                $this->migrateConnection->getRegion(),
+                $this->migrateConnection->getAccount()
+            ));
+
+//            Waiting for previous SQL query
+            sleep(1);
+
+//            Migration database sqls
+            $this->migrateConnection->query(sprintf(
+                'CREATE DATABASE IF NOT EXISTS %s AS REPLICA OF %s.%s.%s;',
+                QueryBuilder::quoteIdentifier($database),
+                $this->sourceConnection->getRegion(),
+                $this->sourceConnection->getAccount(),
+                QueryBuilder::quoteIdentifier($database)
+            ));
+
+            $this->migrateConnection->query(sprintf(
+                'USE DATABASE %s',
+                QueryBuilder::quoteIdentifier($database)
+            ));
+
+            $this->migrateConnection->query('USE SCHEMA PUBLIC');
+
+//            Create and use warehouse for replicate data
+            $sql = <<<SQL
+CREATE WAREHOUSE IF NOT EXISTS "migrate"
+    WITH WAREHOUSE_SIZE = 'Small'
+        WAREHOUSE_TYPE = 'STANDARD'
+        AUTO_SUSPEND = 300
+        AUTO_RESUME = true
+;
+SQL;
+            $this->migrateConnection->query($sql);
+
+            $this->migrateConnection->query('USE WAREHOUSE "migrate";');
+
+//            Run replicate of data
+            $this->migrateConnection->query(sprintf(
+                'ALTER DATABASE %s REFRESH',
+                QueryBuilder::quoteIdentifier($database)
+            ));
+        }
     }
 }
