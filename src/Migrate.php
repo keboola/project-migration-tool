@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace ProjectMigrationTool;
 
-use Keboola\SnowflakeDbAdapter\Exception\CannotAccessObjectException;
+use Keboola\SnowflakeDbAdapter\Exception\RuntimeException;
 use Keboola\SnowflakeDbAdapter\QueryBuilder;
 use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Snowflake\Connection;
@@ -751,7 +751,7 @@ SQL;
                 QueryBuilder::quoteIdentifier($schema),
                 QueryBuilder::quoteIdentifier($table)
             ));
-        } catch (CannotAccessObjectException $e) {
+        } catch (RuntimeException $e) {
             return false;
         }
 
