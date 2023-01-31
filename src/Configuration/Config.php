@@ -8,6 +8,11 @@ use Keboola\Component\Config\BaseConfig;
 
 class Config extends BaseConfig
 {
+    public function getMigrationRole(): string
+    {
+        return $this->getStringValue(['parameters', 'migrationRole']);
+    }
+
     public function getDatabases(): array
     {
         return $this->getArrayValue(['parameters', 'migrateDatabases']);

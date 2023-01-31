@@ -24,6 +24,8 @@ class Migrate
 
     private array $databases;
 
+    private string $mainMigrationRole;
+
     private const MIGRATION_SHARE_PREFIX = 'MIGRATION_SHARE_';
 
     private const SKIP_CLONE_SCHEMAS = [
@@ -38,13 +40,15 @@ class Migrate
         Connection $sourceConnection,
         Connection $migrateConnection,
         Connection $destinationConnection,
-        array $databases
+        array $databases,
+        string $mainMigrationRole
     ) {
         $this->logger = $logger;
         $this->sourceConnection = $sourceConnection;
         $this->migrateConnection = $migrateConnection;
         $this->destinationConnection = $destinationConnection;
         $this->databases = $databases;
+        $this->mainMigrationRole = $mainMigrationRole;
     }
 
     public function createReplication(): void
@@ -507,7 +511,7 @@ SQL;
             $this->destinationConnection->assignGrantToRole($projectUser);
         }
 
-        $this->destinationConnection->useRole('ACCOUNTADMIN');
+        $this->destinationConnection->useRole($this->mainMigrationRole);
 
         $this->destinationConnection->query(sprintf(
             'GRANT ROLE %s TO ROLE SYSADMIN;',
@@ -518,7 +522,7 @@ SQL;
     public function cleanupProject(): void
     {
         // !!!!! TESTING METHOD !!!!!!!
-        $this->destinationConnection->useRole('ACCOUNTADMIN');
+        $this->destinationConnection->useRole($this->mainMigrationRole);
 
         $databases = [
             'SAPI_9472_OLD',
@@ -592,8 +596,8 @@ SQL;
 
     public function grantRoleToUsers(): void
     {
-        $this->destinationConnection->useRole('ACCOUNTADMIN');
-        $this->sourceConnection->useRole('ACCOUNTADMIN');
+        $this->destinationConnection->useRole($this->mainMigrationRole);
+        $this->sourceConnection->useRole($this->mainMigrationRole);
 
         foreach ($this->usedUsers as $user) {
             $grants = $this->sourceConnection->fetchAll(sprintf(
@@ -616,7 +620,7 @@ SQL;
     public function cleanupAccount(bool $dryRun = true): void
     {
         $sqls = [];
-        $currentRole = 'ACCOUNTADMIN';
+        $currentRole = $this->mainMigrationRole;
         foreach ($this->databases as $database) {
             $dbExists = $this->destinationConnection->fetchAll(sprintf(
                 'SHOW DATABASES LIKE %s;',
@@ -631,6 +635,11 @@ SQL;
             foreach ($data['USER'] ?? [] as $user) {
                 if ($user['granted_by'] !== $currentRole) {
                     $currentRole = $user['granted_by'];
+                    $sqls[] = sprintf(
+                        'GRANT ROLE %s TO USER %s;',
+                        QueryBuilder::quoteIdentifier($currentRole),
+                        QueryBuilder::quoteIdentifier((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'))
+                    );
                     $sqls[] = sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($currentRole));
                 }
                 $sqls[] = sprintf('DROP USER IF EXISTS %s;', QueryBuilder::quoteIdentifier($user['name']));
@@ -639,6 +648,11 @@ SQL;
             foreach ($data['ROLE'] ?? [] as $user) {
                 if ($user['granted_by'] !== $currentRole) {
                     $currentRole = $user['granted_by'];
+                    $sqls[] = sprintf(
+                        'GRANT ROLE %s TO USER %s;',
+                        QueryBuilder::quoteIdentifier($currentRole),
+                        QueryBuilder::quoteIdentifier((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'))
+                    );
                     $sqls[] = sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($currentRole));
                 }
                 $sqls[] = sprintf('DROP ROLE IF EXISTS %s;', QueryBuilder::quoteIdentifier($user['name']));
@@ -653,6 +667,11 @@ SQL;
             $grantOfRole = current($grantsOfRole);
             if ($grantOfRole['granted_by'] !== $currentRole) {
                 $currentRole = $grantOfRole['granted_by'];
+                $sqls[] = sprintf(
+                    'GRANT ROLE %s TO USER %s;',
+                    QueryBuilder::quoteIdentifier($currentRole),
+                    QueryBuilder::quoteIdentifier((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'))
+                );
                 $sqls[] = sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($currentRole));
             }
             $sqls[] = sprintf(
@@ -661,8 +680,8 @@ SQL;
             );
             $sqls[] = sprintf('DROP ROLE IF EXISTS %s;', QueryBuilder::quoteIdentifier($databaseRole));
 
-            if ($currentRole !== 'ACCOUNTADMIN') {
-                $currentRole = 'ACCOUNTADMIN';
+            if ($currentRole !== $this->mainMigrationRole) {
+                $currentRole = $this->mainMigrationRole;
                 $sqls[] = sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($currentRole));
             }
 
@@ -751,7 +770,7 @@ SQL;
             'granted_to' => 'ROLE',
             'grantee_name' => $role,
             'grant_option' => 'false',
-            'granted_by' => 'ACCOUNTADMIN',
+            'granted_by' => $this->mainMigrationRole,
         ]);
     }
 
@@ -814,7 +833,7 @@ SQL;
     private function grantsPrivilegesToOldDatabase(string $database, string $databaseRole): void
     {
         $currentRole = $this->destinationConnection->getCurrentRole();
-        $this->destinationConnection->useRole('ACCOUNTADMIN');
+        $this->destinationConnection->useRole($this->mainMigrationRole);
         $dbExists = $this->destinationConnection->fetchAll(sprintf(
             'SHOW DATABASES LIKE %s',
             QueryBuilder::quote($database . '_OLD')
@@ -848,7 +867,7 @@ SQL;
 
     public function postMigrationCleanup(): void
     {
-        $this->destinationConnection->useRole('ACCOUNTADMIN');
+        $this->destinationConnection->useRole($this->mainMigrationRole);
         foreach ($this->databases as $database) {
             $removeDatabases = [
                 $database . '_OLD',
@@ -868,7 +887,7 @@ SQL;
             ));
 
             foreach ($userRoles as $userRole) {
-                if ($userRole['role'] === 'ACCOUNTADMIN') {
+                if ($userRole['role'] === $this->mainMigrationRole) {
                     continue;
                 }
                 $this->destinationConnection->query(sprintf(

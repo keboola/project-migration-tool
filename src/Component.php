@@ -19,17 +19,18 @@ class Component extends BaseComponent
         $migrateSnflkConnection = ConnectionFactory::create('migrate');
         $destinationSnflkConnection = ConnectionFactory::create('destination');
 
-//        Switch to accountadmin role
-        $sourceSnflkConnection->useRole('ACCOUNTADMIN');
-        $migrateSnflkConnection->useRole('ACCOUNTADMIN');
-        $destinationSnflkConnection->useRole('ACCOUNTADMIN');
+//        Switch to main migration role (e.g. ACCOUNTADMIN)
+        $sourceSnflkConnection->useRole($this->getConfig()->getMigrationRole());
+        $migrateSnflkConnection->useRole($this->getConfig()->getMigrationRole());
+        $destinationSnflkConnection->useRole($this->getConfig()->getMigrationRole());
 
         $migrate = new Migrate(
             $this->getLogger(),
             $sourceSnflkConnection,
             $migrateSnflkConnection,
             $destinationSnflkConnection,
-            $this->getConfig()->getDatabases()
+            $this->getConfig()->getDatabases(),
+            $this->getConfig()->getMigrationRole()
         );
 
 //        Cleanup destination account

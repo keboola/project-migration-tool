@@ -17,12 +17,13 @@ class ConfigDefinition extends BaseConfigDefinition
         /** @noinspection NullPointerExceptionInspection */
         $parametersNode
             ->children()
+                ->scalarNode('migrationRole')->end()
                 ->arrayNode('migrateDatabases')
                     ->scalarPrototype()->end()
                 ->end()
                 ->arrayNode('synchronize')
                     ->children()
-                        ->booleanNode('dryRun')->defaultFalse()->end()
+                        ->booleanNode('dryRun')->defaultTrue()->end()
                     ->end()
                 ->end()
                 ->arrayNode('passwordOfUsers')
