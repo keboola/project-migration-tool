@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ProjectMigrationTool;
 
+use Keboola\Component\UserException;
 use Keboola\SnowflakeDbAdapter\Exception\RuntimeException;
 use Keboola\SnowflakeDbAdapter\QueryBuilder;
 use ProjectMigrationTool\Configuration\Config;
@@ -618,7 +619,7 @@ SQL;
         $currentRole = 'ACCOUNTADMIN';
         foreach ($this->databases as $database) {
             $dbExists = $this->destinationConnection->fetchAll(sprintf(
-                'SHOW DATABASES LIKE %s',
+                'SHOW DATABASES LIKE %s;',
                 QueryBuilder::quote($database)
             ));
             if (!$dbExists) {
@@ -630,9 +631,9 @@ SQL;
             foreach ($data['USER'] ?? [] as $user) {
                 if ($user['granted_by'] !== $currentRole) {
                     $currentRole = $user['granted_by'];
-                    $sqls[] = sprintf('USE ROLE %s;', $currentRole);
+                    $sqls[] = sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($currentRole));
                 }
-                $sqls[] = sprintf('DROP USER IF EXISTS %s;', $user['name']);
+                $sqls[] = sprintf('DROP USER IF EXISTS %s;', QueryBuilder::quoteIdentifier($user['name']));
             }
 
             foreach ($data['ROLE'] ?? [] as $user) {
@@ -640,7 +641,7 @@ SQL;
                     $currentRole = $user['granted_by'];
                     $sqls[] = sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($currentRole));
                 }
-                $sqls[] = sprintf('DROP ROLE IF EXISTS %s;', $user['name']);
+                $sqls[] = sprintf('DROP ROLE IF EXISTS %s;', QueryBuilder::quoteIdentifier($user['name']));
             }
 
             $grantsOfRole = $this->destinationConnection->fetchAll(sprintf('SHOW GRANTS OF ROLE %s', $databaseRole));
@@ -666,7 +667,7 @@ SQL;
             }
 
             $sqls[] = sprintf(
-                'DROP DATABASE IF EXISTS %s',
+                'DROP DATABASE IF EXISTS %s;',
                 QueryBuilder::quoteIdentifier($database . '_OLD')
             );
 
@@ -683,6 +684,9 @@ SQL;
             } else {
                 $this->destinationConnection->query($sql);
             }
+        }
+        if ($dryRun && $sqls) {
+            throw new UserException('!!! PLEASE RUN SQLS ON TARGET SNOWFLAKE ACCOUNT !!!');
         }
     }
 
@@ -840,5 +844,39 @@ SQL;
             $this->destinationConnection->query($sql);
         }
         $this->destinationConnection->useRole($currentRole);
+    }
+
+    public function postMigrationCleanup(): void
+    {
+        $this->destinationConnection->useRole('ACCOUNTADMIN');
+        foreach ($this->databases as $database) {
+            $removeDatabases = [
+                $database . '_OLD',
+                $database . '_SHARE',
+            ];
+
+            foreach ($removeDatabases as $removeDatabase) {
+                $this->destinationConnection->query(sprintf(
+                    'DROP DATABASE IF EXISTS %s',
+                    QueryBuilder::quoteIdentifier($removeDatabase)
+                ));
+            }
+
+            $userRoles = $this->destinationConnection->fetchAll(sprintf(
+                'SHOW GRANTS TO USER %s',
+                QueryBuilder::quoteIdentifier((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'))
+            ));
+
+            foreach ($userRoles as $userRole) {
+                if ($userRole['role'] === 'ACCOUNTADMIN') {
+                    continue;
+                }
+                $this->destinationConnection->query(sprintf(
+                    'REVOKE ROLE %s FROM USER %s',
+                    QueryBuilder::quoteIdentifier($userRole['role']),
+                    QueryBuilder::quoteIdentifier($userRole['grantee_name']),
+                ));
+            }
+        }
     }
 }

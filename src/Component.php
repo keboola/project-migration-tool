@@ -69,7 +69,7 @@ class Component extends BaseComponent
 
         $migrate->grantRoleToUsers();
 
-//        $migrate->postMigrationCleanup();
+        $migrate->postMigrationCleanup();
 //        $migrate->postMigrationCheck();
     }
 
