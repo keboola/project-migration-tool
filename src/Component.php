@@ -13,8 +13,6 @@ class Component extends BaseComponent
 {
     protected function run(): void
     {
-        $databases = $this->getConfig()->getDatabases();
-
 //        Create database connections
         $this->getLogger()->info('Connecting to databases.');
         $sourceSnflkConnection = ConnectionFactory::create('source');
@@ -30,50 +28,49 @@ class Component extends BaseComponent
             $this->getLogger(),
             $sourceSnflkConnection,
             $migrateSnflkConnection,
-            $destinationSnflkConnection
+            $destinationSnflkConnection,
+            $this->getConfig()->getDatabases()
         );
 
 //        Cleanup destination account
         if ($this->getConfig()->getSynchronizeRun()) {
-            $migrate->cleanupAccount($databases, $this->getConfig()->getSynchronizeDryRun());
+            $migrate->cleanupAccount($this->getConfig()->getSynchronizeDryRun());
         }
 
 //        Create DB replication
         if ($sourceSnflkConnection->getRegion() !== $destinationSnflkConnection->getRegion()) {
             $this->getLogger()->info('Creating replication.');
-            $migrate->createReplication($databases);
+            $migrate->createReplication();
         }
+
+//        Create DB sharing
+        $migrate->createShare();
 
 //        !!!! !!!!! REMOVE ME !!!!! !!!!
 //        $migrate->cleanupProject();
 
 //        Export grants from source database
-        $rolesGrants = $migrate->exportUsersAndRolesGrants($databases);
+        $rolesGrants = $migrate->exportRolesGrants();
 
 //        Get main role
-        $mainRoleWithGrants = $migrate->getMainRoleWithGrants($databases);
+        $mainRoleWithGrants = $migrate->getMainRoleWithGrants();
 
 //        Create MainRole in destination anflk account
-        $migrate->createMainRole(
-            $mainRoleWithGrants,
-            $databases,
-            $this->getConfig()->getPasswordOfUsers()
-        );
-
-//        Create sharing
-        $migrate->createShare($databases);
+        $migrate->createMainRole($mainRoleWithGrants, $this->getConfig()->getPasswordOfUsers());
 
 //        create and clone databases from shares
-        $migrate->createDatabasesFromShares($databases);
-        $migrate->cloneDatabaseFromShared(
+        $migrate->createDatabasesFromShares();
+        $migrate->cloneDatabaseWithGrants(
             $this->getConfig(),
             $mainRoleWithGrants['name'],
-            $databases,
             $rolesGrants,
             $this->getConfig()->getSynchronizeRun()
         );
 
-        $migrate->grantRoleToUsers($mainRoleWithGrants['name']);
+        $migrate->grantRoleToUsers();
+
+//        $migrate->postMigrationCleanup();
+//        $migrate->postMigrationCheck();
     }
 
     public function getConfig(): Config

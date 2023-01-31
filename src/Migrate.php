@@ -21,6 +21,8 @@ class Migrate
 
     private Connection $destinationConnection;
 
+    private array $databases;
+
     private const MIGRATION_SHARE_PREFIX = 'MIGRATION_SHARE_';
 
     private const SKIP_CLONE_SCHEMAS = [
@@ -34,15 +36,68 @@ class Migrate
         LoggerInterface $logger,
         Connection $sourceConnection,
         Connection $migrateConnection,
-        Connection $destinationConnection
+        Connection $destinationConnection,
+        array $databases
     ) {
         $this->logger = $logger;
         $this->sourceConnection = $sourceConnection;
         $this->migrateConnection = $migrateConnection;
         $this->destinationConnection = $destinationConnection;
+        $this->databases = $databases;
     }
 
-    public function createShare(array $databases): void
+    public function createReplication(): void
+    {
+        foreach ($this->databases as $database) {
+            //            Allow replication on source database
+            $this->sourceConnection->query(sprintf(
+                'ALTER DATABASE %s ENABLE REPLICATION TO ACCOUNTS %s.%s;',
+                QueryBuilder::quoteIdentifier($database),
+                $this->migrateConnection->getRegion(),
+                $this->migrateConnection->getAccount()
+            ));
+
+            //            Waiting for previous SQL query
+            sleep(1);
+
+            //            Migration database sqls
+            $this->migrateConnection->query(sprintf(
+                'CREATE DATABASE IF NOT EXISTS %s AS REPLICA OF %s.%s.%s;',
+                QueryBuilder::quoteIdentifier($database),
+                $this->sourceConnection->getRegion(),
+                $this->sourceConnection->getAccount(),
+                QueryBuilder::quoteIdentifier($database)
+            ));
+
+            $this->migrateConnection->query(sprintf(
+                'USE DATABASE %s',
+                QueryBuilder::quoteIdentifier($database)
+            ));
+
+            $this->migrateConnection->query('USE SCHEMA PUBLIC');
+
+            //            Create and use warehouse for replicate data
+            $sql = <<<SQL
+CREATE WAREHOUSE IF NOT EXISTS "migrate"
+    WITH WAREHOUSE_SIZE = 'Small'
+        WAREHOUSE_TYPE = 'STANDARD'
+        AUTO_SUSPEND = 300
+        AUTO_RESUME = true
+;
+SQL;
+            $this->migrateConnection->query($sql);
+
+            $this->migrateConnection->query('USE WAREHOUSE "migrate";');
+
+            //            Run replicate of data
+            $this->migrateConnection->query(sprintf(
+                'ALTER DATABASE %s REFRESH',
+                QueryBuilder::quoteIdentifier($database)
+            ));
+        }
+    }
+
+    public function createShare(): void
     {
         $sourceRegion = $this->sourceConnection->getRegion();
         $destinationRegion = $this->destinationConnection->getRegion();
@@ -52,7 +107,7 @@ class Migrate
             $connection = $this->migrateConnection;
         }
 
-        foreach ($databases as $database) {
+        foreach ($this->databases as $database) {
             $shareName = sprintf('%s%s', self::MIGRATION_SHARE_PREFIX, strtoupper($database));
 
             $connection->query(sprintf(
@@ -91,12 +146,12 @@ class Migrate
         }
     }
 
-    public function createDatabasesFromShares(array $databases): void
+    public function createDatabasesFromShares(): void
     {
         $sourceRegion = $this->sourceConnection->getRegion();
         $destinationRegion = $this->destinationConnection->getRegion();
 
-        foreach ($databases as $database) {
+        foreach ($this->databases as $database) {
             $shareDbName = $database . '_SHARE';
 
             $this->destinationConnection->query(sprintf(
@@ -115,14 +170,13 @@ class Migrate
         }
     }
 
-    public function cloneDatabaseFromShared(
+    public function cloneDatabaseWithGrants(
         Config $config,
         string $mainRole,
-        array $databases,
         array $grants,
         bool $isSynchronizeRun
     ): void {
-        foreach ($databases as $database) {
+        foreach ($this->databases as $database) {
             $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
             [
                 'databases' => $databaseGrants,
@@ -159,7 +213,7 @@ class Migrate
             }
 
             foreach ($userGrants as $userGrant) {
-                self::createUser($userGrant, $config->getPasswordOfUsers());
+                $this->createUser($userGrant, $config->getPasswordOfUsers());
                 $this->destinationConnection->assignGrantToRole($userGrant);
             }
 
@@ -327,41 +381,43 @@ class Migrate
         }
     }
 
-    public function createUser(array $userGrant, array $passwordOfUsers): void
+    public function getMainRoleWithGrants(): array
     {
-        $this->destinationConnection->useRole($userGrant['granted_by']);
+        $grantsOfRoles = [];
+        foreach ($this->databases as $database) {
+            $roleName = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
 
-        if (!in_array($userGrant['name'], $this->usedUsers)) {
-            $this->usedUsers[] = $userGrant['name'];
+            $grantedOnDatabaseRole = $this->sourceConnection->fetchAll(sprintf(
+                'SHOW GRANTS ON ROLE %s',
+                $roleName
+            ));
+
+            $ownershipOfRole = array_filter($grantedOnDatabaseRole, fn($v) => $v['privilege'] === 'OWNERSHIP');
+
+            $ownershipOfRole = array_map(fn($v) => $v['grantee_name'], $ownershipOfRole);
+
+            $grantsOfRoles = array_merge($grantsOfRoles, array_unique($ownershipOfRole));
         }
 
-        if (isset($passwordOfUsers[$userGrant['name']])) {
-            $this->destinationConnection->query(sprintf(
-                'CREATE USER %s PASSWORD=\'%s\' DEFAULT_ROLE = %s',
-                $userGrant['name'],
-                $passwordOfUsers[$userGrant['name']],
-                $userGrant['name'],
-            ));
-        } else {
-            $password = Helper::generateRandomString();
-            $this->logger->alert(sprintf(
-                'User "%s" has been created with password "%s". Please change it immediately!',
-                $userGrant['name'],
-                $password
-            ));
-            $this->destinationConnection->query(sprintf(
-                'CREATE USER %s PASSWORD=\'%s\' DEFAULT_ROLE = %s MUST_CHANGE_PASSWORD = true',
-                $userGrant['name'],
-                $password,
-                $userGrant['name'],
-            ));
-        }
+        $uniqueMainRoles = array_unique($grantsOfRoles);
+
+        assert(count($uniqueMainRoles) === 1);
+
+        $mainRole = current($uniqueMainRoles);
+
+        return [
+            'name' => $mainRole,
+            'assignedGrants' => $this->sourceConnection->fetchAll(sprintf(
+                'SHOW GRANTS TO ROLE %s;',
+                $mainRole
+            )),
+        ];
     }
 
-    public function exportUsersAndRolesGrants(array $databases): array
+    public function exportRolesGrants(): array
     {
         $tmp = [];
-        foreach ($databases as $database) {
+        foreach ($this->databases as $database) {
             $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
 
             $roles = $this->sourceConnection->fetchAll(sprintf(
@@ -390,7 +446,7 @@ class Migrate
         return $tmp;
     }
 
-    public function createMainRole(array $mainRoleWithGrants, array $databases, array $users): void
+    public function createMainRole(array $mainRoleWithGrants, array $users): void
     {
         $user = $mainRole = $mainRoleWithGrants['name'];
 
@@ -435,18 +491,18 @@ class Migrate
             $user
         ));
 
-        $projectUsers = array_filter($mainRoleWithGrants['assignedGrants'], function ($v) use ($databases) {
+        $projectUsers = array_filter($mainRoleWithGrants['assignedGrants'], function ($v) {
             if ($v['privilege'] !== 'OWNERSHIP') {
                 return false;
             }
             if ($v['granted_on'] !== 'USER') {
                 return false;
             }
-            return in_array($v['name'], $databases);
+            return in_array($v['name'], $this->databases);
         });
 
         foreach ($projectUsers as $projectUser) {
-            self::createUser($projectUser, $users);
+            $this->createUser($projectUser, $users);
             $this->destinationConnection->assignGrantToRole($projectUser);
         }
 
@@ -492,39 +548,6 @@ class Migrate
         $this->destinationConnection->query('DROP USER IF EXISTS KEBOOLA_STORAGE');
     }
 
-    public function getMainRoleWithGrants(array $databases): array
-    {
-        $grantsOfRoles = [];
-        foreach ($databases as $database) {
-            $roleName = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
-
-            $grantedOnDatabaseRole = $this->sourceConnection->fetchAll(sprintf(
-                'SHOW GRANTS ON ROLE %s',
-                $roleName
-            ));
-
-            $ownershipOfRole = array_filter($grantedOnDatabaseRole, fn($v) => $v['privilege'] === 'OWNERSHIP');
-
-            $ownershipOfRole = array_map(fn($v) => $v['grantee_name'], $ownershipOfRole);
-
-            $grantsOfRoles = array_merge($grantsOfRoles, array_unique($ownershipOfRole));
-        }
-
-        $uniqueMainRoles = array_unique($grantsOfRoles);
-
-        assert(count($uniqueMainRoles) === 1);
-
-        $mainRole = current($uniqueMainRoles);
-
-        return [
-            'name' => $mainRole,
-            'assignedGrants' => $this->sourceConnection->fetchAll(sprintf(
-                'SHOW GRANTS TO ROLE %s;',
-                $mainRole
-            )),
-        ];
-    }
-
     private function createWarehouse(array $warehouse): string
     {
         $warehouseInfo = $this->sourceConnection->fetchAll(sprintf(
@@ -566,7 +589,7 @@ SQL;
         return $warehouseInfo['size'];
     }
 
-    public function grantRoleToUsers(string $mainUser): void
+    public function grantRoleToUsers(): void
     {
         $this->destinationConnection->useRole('ACCOUNTADMIN');
         $this->sourceConnection->useRole('ACCOUNTADMIN');
@@ -589,11 +612,11 @@ SQL;
         }
     }
 
-    public function cleanupAccount(array $databases, bool $dryRun = true): void
+    public function cleanupAccount(bool $dryRun = true): void
     {
         $sqls = [];
         $currentRole = 'ACCOUNTADMIN';
-        foreach ($databases as $database) {
+        foreach ($this->databases as $database) {
             $dbExists = $this->destinationConnection->fetchAll(sprintf(
                 'SHOW DATABASES LIKE %s',
                 QueryBuilder::quote($database)
@@ -660,6 +683,37 @@ SQL;
             } else {
                 $this->destinationConnection->query($sql);
             }
+        }
+    }
+
+    private function createUser(array $userGrant, array $passwordOfUsers): void
+    {
+        $this->destinationConnection->useRole($userGrant['granted_by']);
+
+        if (!in_array($userGrant['name'], $this->usedUsers)) {
+            $this->usedUsers[] = $userGrant['name'];
+        }
+
+        if (isset($passwordOfUsers[$userGrant['name']])) {
+            $this->destinationConnection->query(sprintf(
+                'CREATE USER %s PASSWORD=\'%s\' DEFAULT_ROLE = %s',
+                $userGrant['name'],
+                $passwordOfUsers[$userGrant['name']],
+                $userGrant['name'],
+            ));
+        } else {
+            $password = Helper::generateRandomString();
+            $this->logger->alert(sprintf(
+                'User "%s" has been created with password "%s". Please change it immediately!',
+                $userGrant['name'],
+                $password
+            ));
+            $this->destinationConnection->query(sprintf(
+                'CREATE USER %s PASSWORD=\'%s\' DEFAULT_ROLE = %s MUST_CHANGE_PASSWORD = true',
+                $userGrant['name'],
+                $password,
+                $userGrant['name'],
+            ));
         }
     }
 
@@ -786,56 +840,5 @@ SQL;
             $this->destinationConnection->query($sql);
         }
         $this->destinationConnection->useRole($currentRole);
-    }
-
-    public function createReplication(array $databases): void
-    {
-        foreach ($databases as $database) {
-//            Allow replication on source database
-            $this->sourceConnection->query(sprintf(
-                'ALTER DATABASE %s ENABLE REPLICATION TO ACCOUNTS %s.%s;',
-                QueryBuilder::quoteIdentifier($database),
-                $this->migrateConnection->getRegion(),
-                $this->migrateConnection->getAccount()
-            ));
-
-//            Waiting for previous SQL query
-            sleep(1);
-
-//            Migration database sqls
-            $this->migrateConnection->query(sprintf(
-                'CREATE DATABASE IF NOT EXISTS %s AS REPLICA OF %s.%s.%s;',
-                QueryBuilder::quoteIdentifier($database),
-                $this->sourceConnection->getRegion(),
-                $this->sourceConnection->getAccount(),
-                QueryBuilder::quoteIdentifier($database)
-            ));
-
-            $this->migrateConnection->query(sprintf(
-                'USE DATABASE %s',
-                QueryBuilder::quoteIdentifier($database)
-            ));
-
-            $this->migrateConnection->query('USE SCHEMA PUBLIC');
-
-//            Create and use warehouse for replicate data
-            $sql = <<<SQL
-CREATE WAREHOUSE IF NOT EXISTS "migrate"
-    WITH WAREHOUSE_SIZE = 'Small'
-        WAREHOUSE_TYPE = 'STANDARD'
-        AUTO_SUSPEND = 300
-        AUTO_RESUME = true
-;
-SQL;
-            $this->migrateConnection->query($sql);
-
-            $this->migrateConnection->query('USE WAREHOUSE "migrate";');
-
-//            Run replicate of data
-            $this->migrateConnection->query(sprintf(
-                'ALTER DATABASE %s REFRESH',
-                QueryBuilder::quoteIdentifier($database)
-            ));
-        }
     }
 }
