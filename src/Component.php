@@ -47,9 +47,6 @@ class Component extends BaseComponent
 //        Create DB sharing
         $migrate->createShare();
 
-//        !!!! !!!!! REMOVE ME !!!!! !!!!
-//        $migrate->cleanupProject();
-
 //        Export grants from source database
         $rolesGrants = $migrate->exportRolesGrants();
 
@@ -61,14 +58,12 @@ class Component extends BaseComponent
 
 //        create and clone databases from shares
         $migrate->createDatabasesFromShares();
-        $migrate->cloneDatabaseWithGrants(
-            $this->getConfig(),
-            $mainRoleWithGrants['name'],
-            $rolesGrants,
-            $this->getConfig()->getSynchronizeRun()
-        );
+
+        $migrate->migrateUsersRolesAndGrants($this->getConfig(), $mainRoleWithGrants['name'], $rolesGrants);
 
         $migrate->grantRoleToUsers();
+
+        $migrate->cloneDatabaseWithGrants($mainRoleWithGrants['name'], $rolesGrants);
 
         $migrate->postMigrationCleanup();
 //        $migrate->postMigrationCheck();

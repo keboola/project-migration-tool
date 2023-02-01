@@ -175,23 +175,15 @@ SQL;
         }
     }
 
-    public function cloneDatabaseWithGrants(
-        Config $config,
-        string $mainRole,
-        array $grants,
-        bool $isSynchronizeRun
-    ): void {
+    public function migrateUsersRolesAndGrants(Config $config, string $mainRole, array $grants): void
+    {
+        // first step - migate users and roles (without grants)
         foreach ($this->databases as $database) {
             $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
             [
-                'databases' => $databaseGrants,
-                'schemas' => $schemasGrants,
-                'tables' => $tablesGrants,
                 'roles' => $rolesGrants,
                 'account' => $accountGrants,
-                'warehouse' => $warehouseGrants,
                 'user' => $userGrants,
-                'other' => $otherGrants,
             ] = Helper::parseGrantsToObjects($grants[$databaseRole]);
 
             $this->destinationConnection->createRole([
@@ -199,32 +191,63 @@ SQL;
                 'granted_by' => $mainRole,
                 'privilege' => 'OWNERSHIP',
             ]);
+
             foreach ($accountGrants as $grant) {
                 $this->destinationConnection->assignGrantToRole($grant);
-            }
-
-            if ($isSynchronizeRun) {
-                $this->grantsPrivilegesToOldDatabase($database, $databaseRole);
             }
 
             foreach ($rolesGrants as $rolesGrant) {
                 if ($rolesGrant['privilege'] === 'OWNERSHIP') {
                     $this->destinationConnection->createRole($rolesGrant);
-                    if ($isSynchronizeRun) {
+                    if ($config->getSynchronizeRun()) {
                         $this->grantsPrivilegesToOldDatabase($database, $rolesGrant['name']);
                     }
                 }
-                $this->destinationConnection->assignGrantToRole($rolesGrant);
             }
 
             foreach ($userGrants as $userGrant) {
                 $this->createUser($userGrant, $config->getPasswordOfUsers());
-                $this->destinationConnection->assignGrantToRole($userGrant);
+            }
+        }
+
+        // second step - migrate all grants of roles/users/warehouses/account
+        foreach ($this->databases as $database) {
+            $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
+
+            if ($config->getSynchronizeRun()) {
+                $this->grantsPrivilegesToOldDatabase($database, $databaseRole);
+            }
+
+            [
+                'roles' => $rolesGrants,
+                'warehouse' => $warehouseGrants,
+                'user' => $userGrants,
+            ] = Helper::parseGrantsToObjects($grants[$databaseRole]);
+
+            foreach ($rolesGrants as $rolesGrant) {
+                $this->destinationConnection->assignGrantToRole($rolesGrant);
             }
 
             foreach ($warehouseGrants as $warehouseGrant) {
                 $this->destinationConnection->assignGrantToRole($warehouseGrant);
             }
+
+            foreach ($userGrants as $userGrant) {
+                $this->destinationConnection->assignGrantToRole($userGrant);
+            }
+        }
+    }
+
+    public function cloneDatabaseWithGrants(string $mainRole, array $grants): void
+    {
+        foreach ($this->databases as $database) {
+            $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
+            [
+                'databases' => $databaseGrants,
+                'schemas' => $schemasGrants,
+                'tables' => $tablesGrants,
+                'other' => $otherGrants,
+            ] = Helper::parseGrantsToObjects($grants[$databaseRole]);
 
             $this->destinationConnection->useRole($mainRole);
 
@@ -517,40 +540,6 @@ SQL;
             'GRANT ROLE %s TO ROLE SYSADMIN;',
             $mainRole
         ));
-    }
-
-    public function cleanupProject(): void
-    {
-        // !!!!! TESTING METHOD !!!!!!!
-        $this->destinationConnection->useRole($this->mainMigrationRole);
-
-        $databases = [
-            'SAPI_9472_OLD',
-            'SAPI_9473_OLD',
-        ];
-        foreach ($databases as $database) {
-            $this->destinationConnection->query(sprintf(
-                'DROP DATABASE IF EXISTS %s;',
-                QueryBuilder::quoteIdentifier($database)
-            ));
-        }
-
-        $warehouses = [
-            'MIGRATE',
-            'MIGRATE_SMALL',
-            'MIGRATE_MEDIUM',
-            'MIGRATE_LARGE',
-        ];
-
-        foreach ($warehouses as $warehouse) {
-            $this->destinationConnection->query(sprintf(
-                'DROP WAREHOUSE IF EXISTS %s',
-                $warehouse
-            ));
-        }
-
-        $this->destinationConnection->query('DROP ROLE IF EXISTS KEBOOLA_STORAGE');
-        $this->destinationConnection->query('DROP USER IF EXISTS KEBOOLA_STORAGE');
     }
 
     private function createWarehouse(array $warehouse): string
