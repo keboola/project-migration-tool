@@ -35,6 +35,7 @@ class Component extends BaseComponent
 
 //        Cleanup destination account
         if ($this->getConfig()->getSynchronizeRun()) {
+            $this->getLogger()->info('Pre-migration cleanup.');
             $migrate->cleanupAccount($this->getConfig()->getSynchronizeDryRun());
         }
 
@@ -45,26 +46,34 @@ class Component extends BaseComponent
         }
 
 //        Create DB sharing
+        $this->getLogger()->info('Creating DB sharing.');
         $migrate->createShare();
 
 //        Export grants from source database
+        $this->getLogger()->info('Exporting grants of roles.');
         $rolesGrants = $migrate->exportRolesGrants();
 
 //        Get main role
+        $this->getLogger()->info('Getting main role with grants');
         $mainRoleWithGrants = $migrate->getMainRoleWithGrants();
 
-//        Create MainRole in destination anflk account
+//        Create MainRole in target snflk account
+        $this->getLogger()->info('Creating main role in target account.');
         $migrate->createMainRole($mainRoleWithGrants, $this->getConfig()->getPasswordOfUsers());
 
 //        create and clone databases from shares
+        $this->getLogger()->info('Creating shares databases.');
         $migrate->createDatabasesFromShares();
 
+        $this->getLogger()->info('Migrating warehouses/users/roles with grants');
         $migrate->migrateUsersRolesAndGrants($this->getConfig(), $mainRoleWithGrants['name'], $rolesGrants);
 
         $migrate->grantRoleToUsers();
 
+        $this->getLogger()->info('Cloning databases with grants.');
         $migrate->cloneDatabaseWithGrants($mainRoleWithGrants['name'], $rolesGrants);
 
+        $this->getLogger()->info('Post-migration cleanup.');
         $migrate->postMigrationCleanup();
 //        $migrate->postMigrationCheck();
     }

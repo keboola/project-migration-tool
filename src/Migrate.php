@@ -177,6 +177,7 @@ SQL;
 
     public function migrateUsersRolesAndGrants(Config $config, string $mainRole, array $grants): void
     {
+        $this->logger->info('Migrating users and roles.');
         // first step - migate users and roles (without grants)
         foreach ($this->databases as $database) {
             $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
@@ -210,6 +211,7 @@ SQL;
             }
         }
 
+        $this->logger->info('Migrating grants of warehouses/users and roles.');
         // second step - migrate all grants of roles/users/warehouses/account
         foreach ($this->databases as $database) {
             $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
@@ -254,6 +256,7 @@ SQL;
             $shareDbName = $database . '_SHARE';
             $oldDbName = $database . '_OLD';
 
+            $this->logger->info(sprintf('Migrate database "%s".', $database));
             $this->destinationConnection->query(sprintf(
                 'CREATE DATABASE %s;',
                 QueryBuilder::quoteIdentifier($database)
@@ -378,7 +381,7 @@ SQL;
                     $this->destinationConnection->useRole($ownershipOnTable['granted_by']);
 
                     if ($this->canCloneTable($database, $schemaName, $tableName)) {
-                        $this->logger->info(sprintf('Clone table "%s" from OLD database', $tableName));
+                        $this->logger->info(sprintf('Cloning table "%s" from OLD database', $tableName));
                         $this->destinationConnection->query(sprintf(
                             'CREATE TABLE %s.%s.%s CLONE %s.%s.%s;',
                             QueryBuilder::quoteIdentifier($database),
@@ -389,7 +392,7 @@ SQL;
                             QueryBuilder::quoteIdentifier($tableName),
                         ));
                     } else {
-                        $this->logger->info(sprintf('Create table "%s" from SHARE database', $tableName));
+                        $this->logger->info(sprintf('Creating table "%s" from SHARE database', $tableName));
                         $this->destinationConnection->query(sprintf(
                             'CREATE TABLE %s.%s.%s AS SELECT * FROM %s.%s.%s;',
                             QueryBuilder::quoteIdentifier($database),
