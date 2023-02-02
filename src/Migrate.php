@@ -145,7 +145,7 @@ class Migrate
 
     public function createReplication(): void
     {
-        if ($this->sourceConnection->getRegion() !== $this->destinationConnection->getRegion()) {
+        if ($this->sourceConnection->getRegion() === $this->destinationConnection->getRegion()) {
             return;
         }
         foreach ($this->databases as $database) {
@@ -738,8 +738,18 @@ SQL;
         }
     }
 
-    public function postMigrationCheck(): void
+    public function postMigrationCheck(array $mainRoleWithGrants): void
     {
+
+        $warehouses = array_filter($mainRoleWithGrants['assignedGrants'], fn($v) => $v['granted_on'] === 'WAREHOUSE');
+
+        $useWarehouse = sprintf(
+            'USE WAREHOUSE %s',
+            QueryBuilder::quoteIdentifier(current($warehouses)['name'])
+        );
+        $this->sourceConnection->query($useWarehouse);
+        $this->destinationConnection->query($useWarehouse);
+
         foreach ($this->databases as $database) {
             $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
 

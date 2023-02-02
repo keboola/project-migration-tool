@@ -62,7 +62,10 @@ class Component extends BaseComponent
     {
         $migrate = MigrateFactory::create($this->getLogger(), $this->getConfig());
 
-        $migrate->postMigrationCheck();
+        $this->getLogger()->info('Getting main role with grants');
+        $mainRoleWithGrants = $migrate->getMainRoleWithGrants();
+
+        $migrate->postMigrationCheck($mainRoleWithGrants);
     }
 
     public function getConfig(): Config
