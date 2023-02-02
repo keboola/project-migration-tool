@@ -51,6 +51,98 @@ class Migrate
         $this->mainMigrationRole = $mainMigrationRole;
     }
 
+    public function cleanupAccount(bool $dryRun = true): void
+    {
+        $sqls = [];
+        $currentRole = $this->mainMigrationRole;
+        foreach ($this->databases as $database) {
+            $dbExists = $this->destinationConnection->fetchAll(sprintf(
+                'SHOW DATABASES LIKE %s;',
+                QueryBuilder::quote($database)
+            ));
+            if (!$dbExists) {
+                continue;
+            }
+            $databaseRole = $this->destinationConnection->getOwnershipRoleOnDatabase($database);
+            $data = $this->getDataToRemove($databaseRole);
+
+            foreach ($data['USER'] ?? [] as $user) {
+                if ($user['granted_by'] !== $currentRole) {
+                    $currentRole = $user['granted_by'];
+                    $sqls[] = sprintf(
+                        'GRANT ROLE %s TO USER %s;',
+                        QueryBuilder::quoteIdentifier($currentRole),
+                        QueryBuilder::quoteIdentifier((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'))
+                    );
+                    $sqls[] = sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($currentRole));
+                }
+                $sqls[] = sprintf('DROP USER IF EXISTS %s;', QueryBuilder::quoteIdentifier($user['name']));
+            }
+
+            foreach ($data['ROLE'] ?? [] as $user) {
+                if ($user['granted_by'] !== $currentRole) {
+                    $currentRole = $user['granted_by'];
+                    $sqls[] = sprintf(
+                        'GRANT ROLE %s TO USER %s;',
+                        QueryBuilder::quoteIdentifier($currentRole),
+                        QueryBuilder::quoteIdentifier((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'))
+                    );
+                    $sqls[] = sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($currentRole));
+                }
+                $sqls[] = sprintf('DROP ROLE IF EXISTS %s;', QueryBuilder::quoteIdentifier($user['name']));
+            }
+
+            $grantsOfRole = $this->destinationConnection->fetchAll(sprintf('SHOW GRANTS OF ROLE %s', $databaseRole));
+            $filteredGrantsOfRole = array_filter(
+                $grantsOfRole,
+                fn($v) => strtoupper($v['grantee_name']) === strtoupper($databaseRole)
+            );
+            assert(count($filteredGrantsOfRole) === 1);
+            $grantOfRole = current($grantsOfRole);
+            if ($grantOfRole['granted_by'] !== $currentRole) {
+                $currentRole = $grantOfRole['granted_by'];
+                $sqls[] = sprintf(
+                    'GRANT ROLE %s TO USER %s;',
+                    QueryBuilder::quoteIdentifier($currentRole),
+                    QueryBuilder::quoteIdentifier((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'))
+                );
+                $sqls[] = sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($currentRole));
+            }
+            $sqls[] = sprintf(
+                'DROP USER IF EXISTS %s;',
+                QueryBuilder::quoteIdentifier($grantOfRole['grantee_name'])
+            );
+            $sqls[] = sprintf('DROP ROLE IF EXISTS %s;', QueryBuilder::quoteIdentifier($databaseRole));
+
+            if ($currentRole !== $this->mainMigrationRole) {
+                $currentRole = $this->mainMigrationRole;
+                $sqls[] = sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($currentRole));
+            }
+
+            $sqls[] = sprintf(
+                'DROP DATABASE IF EXISTS %s;',
+                QueryBuilder::quoteIdentifier($database . '_OLD')
+            );
+
+            $sqls[] = sprintf(
+                'ALTER DATABASE IF EXISTS %s RENAME TO %s;',
+                QueryBuilder::quoteIdentifier($database),
+                QueryBuilder::quoteIdentifier($database . '_OLD'),
+            );
+        }
+
+        foreach ($sqls as $sql) {
+            if ($dryRun) {
+                $this->logger->info($sql);
+            } else {
+                $this->destinationConnection->query($sql);
+            }
+        }
+        if ($dryRun && $sqls) {
+            throw new UserException('!!! PLEASE RUN SQLS ON TARGET SNOWFLAKE ACCOUNT !!!');
+        }
+    }
+
     public function createReplication(): void
     {
         foreach ($this->databases as $database) {
@@ -609,96 +701,257 @@ SQL;
         }
     }
 
-    public function cleanupAccount(bool $dryRun = true): void
+    public function postMigrationCleanup(): void
     {
-        $sqls = [];
-        $currentRole = $this->mainMigrationRole;
+        $this->destinationConnection->useRole($this->mainMigrationRole);
         foreach ($this->databases as $database) {
-            $dbExists = $this->destinationConnection->fetchAll(sprintf(
-                'SHOW DATABASES LIKE %s;',
-                QueryBuilder::quote($database)
+            $removeDatabases = [
+                $database . '_OLD',
+                $database . '_SHARE',
+            ];
+
+            foreach ($removeDatabases as $removeDatabase) {
+                $this->destinationConnection->query(sprintf(
+                    'DROP DATABASE IF EXISTS %s',
+                    QueryBuilder::quoteIdentifier($removeDatabase)
+                ));
+            }
+
+            $userRoles = $this->destinationConnection->fetchAll(sprintf(
+                'SHOW GRANTS TO USER %s',
+                QueryBuilder::quoteIdentifier((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'))
             ));
-            if (!$dbExists) {
-                continue;
-            }
-            $databaseRole = $this->destinationConnection->getOwnershipRoleOnDatabase($database);
-            $data = self::getDataToRemove($databaseRole);
 
-            foreach ($data['USER'] ?? [] as $user) {
-                if ($user['granted_by'] !== $currentRole) {
-                    $currentRole = $user['granted_by'];
-                    $sqls[] = sprintf(
-                        'GRANT ROLE %s TO USER %s;',
-                        QueryBuilder::quoteIdentifier($currentRole),
-                        QueryBuilder::quoteIdentifier((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'))
-                    );
-                    $sqls[] = sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($currentRole));
+            foreach ($userRoles as $userRole) {
+                if ($userRole['role'] === $this->mainMigrationRole) {
+                    continue;
                 }
-                $sqls[] = sprintf('DROP USER IF EXISTS %s;', QueryBuilder::quoteIdentifier($user['name']));
+                $this->destinationConnection->query(sprintf(
+                    'REVOKE ROLE %s FROM USER %s',
+                    QueryBuilder::quoteIdentifier($userRole['role']),
+                    QueryBuilder::quoteIdentifier($userRole['grantee_name']),
+                ));
             }
+        }
+    }
 
-            foreach ($data['ROLE'] ?? [] as $user) {
-                if ($user['granted_by'] !== $currentRole) {
-                    $currentRole = $user['granted_by'];
-                    $sqls[] = sprintf(
-                        'GRANT ROLE %s TO USER %s;',
-                        QueryBuilder::quoteIdentifier($currentRole),
-                        QueryBuilder::quoteIdentifier((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'))
-                    );
-                    $sqls[] = sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($currentRole));
+    public function postMigrationCheck(): void
+    {
+        foreach ($this->databases as $database) {
+            $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
+
+            $rolesAndUsers = $this->listRolesAndUsers($databaseRole);
+            $rolesAndUsers = array_merge_recursive(
+                $rolesAndUsers,
+                ['users' => [$databaseRole], 'roles' => [$databaseRole]]
+            );
+
+            $compares = [];
+            // phpcs:disable Generic.Files.LineLength
+//            Compare TABLES
+            $compares[] = [
+                'group' => 'Tables',
+                'itemNameKey' => 'TABLE_NAME',
+                'sql' => sprintf(
+                    'SELECT %s FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES WHERE DELETED IS NULL AND TABLE_CATALOG = %s ORDER BY TABLE_SCHEMA, TABLE_NAME;',
+                    implode(',', [
+                        'CONCAT(TABLE_SCHEMA, \'.\', TABLE_NAME) AS ID',
+                        'TABLE_NAME',
+                        'TABLE_SCHEMA',
+                        'TABLE_OWNER',
+                        'TABLE_TYPE',
+                        'ROW_COUNT',
+                        // 'BYTES',
+                    ]),
+                    QueryBuilder::quote($database)
+                ),
+            ];
+
+//            Compare USERS
+            $compares[] = [
+                'group' => 'Users',
+                'itemNameKey' => 'NAME',
+                'sql' => sprintf(
+                    'SELECT %s FROM SNOWFLAKE.ACCOUNT_USAGE.USERS WHERE DELETED_ON IS NULL AND NAME IN (%s) ORDER BY NAME;',
+                    implode(',', [
+                        'NAME AS ID',
+                        'NAME',
+                        'LOGIN_NAME',
+                        'DISPLAY_NAME',
+                        'FIRST_NAME',
+                        'LAST_NAME',
+                        'EMAIL',
+                        'DEFAULT_WAREHOUSE',
+                        'DEFAULT_NAMESPACE',
+                        'DEFAULT_ROLE',
+                        'OWNER',
+                    ]),
+                    implode(', ', array_map(fn($v) => QueryBuilder::quote($v), $rolesAndUsers['roles']))
+                ),
+            ];
+
+//            Compare GRANTS TO USERS
+            $compares[] = [
+                'group' => 'Grants to user',
+                'itemNameKey' => 'ROLE',
+                'sql' => sprintf(
+                    'SELECT %s FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_USERS WHERE DELETED_ON IS NULL AND ROLE IN (%s) ORDER BY ROLE, GRANTED_BY;',
+                    implode(',', [
+                        'CONCAT(ROLE, GRANTED_TO, GRANTEE_NAME, GRANTED_BY) AS ID',
+                        'ROLE',
+                        'GRANTED_TO',
+                        'GRANTEE_NAME',
+                        'GRANTED_BY',
+                    ]),
+                    implode(', ', array_map(fn($v) => QueryBuilder::quote($v), $rolesAndUsers['users']))
+                ),
+            ];
+
+//            Compare ROLES
+            $compares[] = [
+                'group' => 'Roles',
+                'itemNameKey' => 'NAME',
+                'sql' => sprintf(
+                    'SELECT %s FROM SNOWFLAKE.ACCOUNT_USAGE.ROLES WHERE DELETED_ON IS NULL AND NAME IN (%s) ORDER BY NAME;',
+                    implode(',', [
+                        'CONCAT(NAME, OWNER) AS ID',
+                        'NAME',
+                        'COMMENT',
+                        'OWNER',
+                    ]),
+                    implode(', ', array_map(fn($v) => QueryBuilder::quote($v), $rolesAndUsers['roles']))
+                ),
+            ];
+
+//            Compare GRANTS TO ROLES
+            $compares[] = [
+                'group' => 'Grants to roles',
+                'itemNameKey' => 'ID',
+                'sql' => sprintf(
+                    'SELECT %s FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES WHERE DELETED_ON IS NULL AND GRANTEE_NAME IN (%s) ORDER BY GRANTEE_NAME, PRIVILEGE, NAME;',
+                    implode(',', [
+                        'CONCAT(PRIVILEGE, GRANTED_ON, NAME, GRANTED_TO, GRANTEE_NAME, GRANTED_BY, CASE WHEN TABLE_CATALOG IS NULL THEN \'\' ELSE TABLE_CATALOG END, CASE WHEN TABLE_SCHEMA IS NULL THEN \'\' ELSE TABLE_SCHEMA END) AS ID',
+                        'PRIVILEGE',
+                        'GRANTED_ON',
+                        'NAME',
+                        'TABLE_CATALOG',
+                        'TABLE_SCHEMA',
+                        'GRANTED_TO',
+                        'GRANTEE_NAME',
+                        'GRANT_OPTION',
+                        'GRANTED_BY',
+                    ]),
+                    implode(', ', array_map(fn($v) => QueryBuilder::quote($v), $rolesAndUsers['roles']))
+                ),
+            ];
+            // phpcs:enable Generic.Files.LineLength
+
+            foreach ($compares as $compare) {
+                $this->compareData($compare['group'], $compare['itemNameKey'], $compare['sql']);
+            }
+        }
+    }
+
+    private function compareData(string $group, string $itemNameKey, string $sql): void
+    {
+        $sourceData = $this->sourceConnection->fetchAll($sql);
+        $targetData = $this->destinationConnection->fetchAll($sql);
+
+        if (count($sourceData) !== count($targetData)) {
+            $this->logger->alert(sprintf(
+                '%s: Source data count (%s) not equils target data count (%s)',
+                $group,
+                count($sourceData),
+                count($targetData)
+            ));
+        }
+        $sourceData = array_combine(array_map(fn($v) => $v['ID'], $sourceData), $sourceData);
+        $targetData = array_combine(array_map(fn($v) => $v['ID'], $targetData), $targetData);
+
+        array_walk($sourceData, fn(&$v) => $v = serialize($v));
+        array_walk($targetData, fn(&$v) => $v = serialize($v));
+
+        $diffs = [
+            array_diff($sourceData, $targetData),
+            array_diff($targetData, $sourceData),
+        ];
+        $print = [];
+        foreach ($diffs as $diff) {
+            foreach ($diff as $k => $serializeItem) {
+                if (!isset($sourceData[$k])) {
+                    $this->logger->alert(sprintf('%s: Item "%s" doesn\'t exists in source account', $group, $k));
+                    continue;
                 }
-                $sqls[] = sprintf('DROP ROLE IF EXISTS %s;', QueryBuilder::quoteIdentifier($user['name']));
-            }
+                if (!isset($targetData[$k])) {
+                    $this->logger->alert(sprintf('%s: Item "%s" doesn\'t exists in target account', $group, $k));
+                    continue;
+                }
+                $itemSource = (array) unserialize($sourceData[$k]);
+                $itemName = strval($itemSource[$itemNameKey]);
+                if (in_array($itemName, $print)) {
+                    continue;
+                }
+                $itemTarget = (array) unserialize($targetData[$k]);
+                $itemDiffs = [
+                    'target' => array_diff($itemSource, $itemTarget),
+                    'source' => array_diff($itemTarget, $itemSource),
+                ];
 
-            $grantsOfRole = $this->destinationConnection->fetchAll(sprintf('SHOW GRANTS OF ROLE %s', $databaseRole));
-            $filteredGrantsOfRole = array_filter(
-                $grantsOfRole,
-                fn($v) => strtoupper($v['grantee_name']) === strtoupper($databaseRole)
-            );
-            assert(count($filteredGrantsOfRole) === 1);
-            $grantOfRole = current($grantsOfRole);
-            if ($grantOfRole['granted_by'] !== $currentRole) {
-                $currentRole = $grantOfRole['granted_by'];
-                $sqls[] = sprintf(
-                    'GRANT ROLE %s TO USER %s;',
-                    QueryBuilder::quoteIdentifier($currentRole),
-                    QueryBuilder::quoteIdentifier((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'))
-                );
-                $sqls[] = sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($currentRole));
-            }
-            $sqls[] = sprintf(
-                'DROP USER IF EXISTS %s;',
-                QueryBuilder::quoteIdentifier($grantOfRole['grantee_name'])
-            );
-            $sqls[] = sprintf('DROP ROLE IF EXISTS %s;', QueryBuilder::quoteIdentifier($databaseRole));
+                foreach ($itemDiffs as $missingIn => $itemDiff) {
+                    $this->printDiffAlert($group, $itemName, $missingIn, $itemDiff);
+                }
 
-            if ($currentRole !== $this->mainMigrationRole) {
-                $currentRole = $this->mainMigrationRole;
-                $sqls[] = sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($currentRole));
-            }
-
-            $sqls[] = sprintf(
-                'DROP DATABASE IF EXISTS %s;',
-                QueryBuilder::quoteIdentifier($database . '_OLD')
-            );
-
-            $sqls[] = sprintf(
-                'ALTER DATABASE IF EXISTS %s RENAME TO %s;',
-                QueryBuilder::quoteIdentifier($database),
-                QueryBuilder::quoteIdentifier($database . '_OLD'),
-            );
-        }
-
-        foreach ($sqls as $sql) {
-            if ($dryRun) {
-                $this->logger->info($sql);
-            } else {
-                $this->destinationConnection->query($sql);
+                $print[] = $itemName;
             }
         }
-        if ($dryRun && $sqls) {
-            throw new UserException('!!! PLEASE RUN SQLS ON TARGET SNOWFLAKE ACCOUNT !!!');
+    }
+
+    private function printDiffAlert(string $group, string $name, string $missingIn, array $data): void
+    {
+        if (!$data) {
+            return;
         }
+        array_walk($data, fn(&$v, $k) => $v = sprintf('%s: %s', $k, $v));
+
+        $this->logger->alert(sprintf(
+            '%s: "%s" is not same. Missing in %s account (%s)',
+            $group,
+            $name,
+            $missingIn,
+            implode(';', $data)
+        ));
+    }
+
+    private function listRolesAndUsers(string $role): array
+    {
+        $grants = $this->destinationConnection->fetchAll(sprintf(
+            'SHOW GRANTS TO ROLE %s',
+            QueryBuilder::quoteIdentifier($role)
+        ));
+
+        $filteredGrants = array_filter(
+            $grants,
+            fn($v) => $v['privilege'] === 'OWNERSHIP' && (in_array($v['granted_on'], ['USER', 'ROLE']))
+        );
+
+        $tmp = [
+            'users' => [],
+            'roles' => [],
+        ];
+        foreach ($filteredGrants as $filteredGrant) {
+            switch ($filteredGrant['granted_on']) {
+                case 'USER':
+                    $tmp['users'][] = $filteredGrant['name'];
+                    break;
+                case 'ROLE':
+                    $tmp['roles'][] = $filteredGrant['name'];
+                    $childRoles = $this->listRolesAndUsers($filteredGrant['name']);
+                    $tmp = array_merge_recursive($tmp, $childRoles);
+                    break;
+            }
+        }
+
+        return $tmp;
     }
 
     private function createUser(array $userGrant, array $passwordOfUsers): void
@@ -789,7 +1042,7 @@ SQL;
             $roleGrants = $mapGrants['ROLE'];
             foreach ($roleGrants as $roleGrant) {
                 $mapGrants = array_merge_recursive(
-                    self::getDataToRemove($roleGrant['name']),
+                    $this->getDataToRemove($roleGrant['name']),
                     $mapGrants,
                 );
             }
@@ -855,39 +1108,5 @@ SQL;
             $this->destinationConnection->query($sql);
         }
         $this->destinationConnection->useRole($currentRole);
-    }
-
-    public function postMigrationCleanup(): void
-    {
-        $this->destinationConnection->useRole($this->mainMigrationRole);
-        foreach ($this->databases as $database) {
-            $removeDatabases = [
-                $database . '_OLD',
-                $database . '_SHARE',
-            ];
-
-            foreach ($removeDatabases as $removeDatabase) {
-                $this->destinationConnection->query(sprintf(
-                    'DROP DATABASE IF EXISTS %s',
-                    QueryBuilder::quoteIdentifier($removeDatabase)
-                ));
-            }
-
-            $userRoles = $this->destinationConnection->fetchAll(sprintf(
-                'SHOW GRANTS TO USER %s',
-                QueryBuilder::quoteIdentifier((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'))
-            ));
-
-            foreach ($userRoles as $userRole) {
-                if ($userRole['role'] === $this->mainMigrationRole) {
-                    continue;
-                }
-                $this->destinationConnection->query(sprintf(
-                    'REVOKE ROLE %s FROM USER %s',
-                    QueryBuilder::quoteIdentifier($userRole['role']),
-                    QueryBuilder::quoteIdentifier($userRole['grantee_name']),
-                ));
-            }
-        }
     }
 }
