@@ -975,13 +975,39 @@ SQL;
             $this->usedUsers[] = $userGrant['name'];
         }
 
+        $describeUser = $this->sourceConnection->fetchAll(sprintf(
+            'SHOW USERS LIKE %s',
+            QueryBuilder::quote($userGrant['name'])
+        ));
+        assert(count($describeUser) === 1);
+
+        $allowOptions = [
+            'default_secondary_roles',
+            'default_role',
+            'default_namespace',
+            'default_warehouse',
+            'display_name',
+            'login_name',
+        ];
+
+        $describeUser = (array) array_filter(
+            current($describeUser),
+            fn($k) => in_array($k, $allowOptions),
+            ARRAY_FILTER_USE_KEY
+        );
+
+        $describeUser = array_filter(
+            $describeUser,
+            fn($v) => $v !== ''
+        );
+
+        array_walk(
+            $describeUser,
+            fn(&$item, $k) => $item = sprintf('%s = %s', strtoupper($k), QueryBuilder::quote($item))
+        );
+
         if (isset($passwordOfUsers[$userGrant['name']])) {
-            $this->destinationConnection->query(sprintf(
-                'CREATE USER %s PASSWORD=\'%s\' DEFAULT_ROLE = %s',
-                $userGrant['name'],
-                $passwordOfUsers[$userGrant['name']],
-                $userGrant['name'],
-            ));
+            $password = $passwordOfUsers[$userGrant['name']];
         } else {
             $password = Helper::generateRandomString();
             $this->logger->alert(sprintf(
@@ -989,13 +1015,18 @@ SQL;
                 $userGrant['name'],
                 $password
             ));
-            $this->destinationConnection->query(sprintf(
-                'CREATE USER %s PASSWORD=\'%s\' DEFAULT_ROLE = %s MUST_CHANGE_PASSWORD = true',
-                $userGrant['name'],
-                $password,
-                $userGrant['name'],
-            ));
         }
+
+        $describeUser['password'] = sprintf(
+            'PASSWORD = %s',
+            QueryBuilder::quote($password)
+        );
+
+        $this->destinationConnection->query(sprintf(
+            'CREATE USER %s %s',
+            $userGrant['name'],
+            implode(' ', $describeUser),
+        ));
     }
 
     private function getOtherRolesToMainProjectRole(array $roles): array
