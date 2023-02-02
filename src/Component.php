@@ -7,31 +7,14 @@ namespace ProjectMigrationTool;
 use Keboola\Component\BaseComponent;
 use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Configuration\ConfigDefinition;
-use ProjectMigrationTool\Snowflake\ConnectionFactory;
 
 class Component extends BaseComponent
 {
+    private const ACTION_CHECK_MIGRATED_DATA = 'runCheckMigratedData';
+
     protected function run(): void
     {
-//        Create database connections
-        $this->getLogger()->info('Connecting to databases.');
-        $sourceSnflkConnection = ConnectionFactory::create('source');
-        $migrateSnflkConnection = ConnectionFactory::create('migrate');
-        $destinationSnflkConnection = ConnectionFactory::create('destination');
-
-//        Switch to main migration role (e.g. ACCOUNTADMIN)
-        $sourceSnflkConnection->useRole($this->getConfig()->getMigrationRole());
-        $migrateSnflkConnection->useRole($this->getConfig()->getMigrationRole());
-        $destinationSnflkConnection->useRole($this->getConfig()->getMigrationRole());
-
-        $migrate = new Migrate(
-            $this->getLogger(),
-            $sourceSnflkConnection,
-            $migrateSnflkConnection,
-            $destinationSnflkConnection,
-            $this->getConfig()->getDatabases(),
-            $this->getConfig()->getMigrationRole()
-        );
+        $migrate = MigrateFactory::create($this->getLogger(), $this->getConfig());
 
 //        Cleanup destination account
         if ($this->getConfig()->getSynchronizeRun()) {
@@ -40,10 +23,8 @@ class Component extends BaseComponent
         }
 
 //        Create DB replication
-        if ($sourceSnflkConnection->getRegion() !== $destinationSnflkConnection->getRegion()) {
-            $this->getLogger()->info('Creating replication.');
-            $migrate->createReplication();
-        }
+        $this->getLogger()->info('Creating replication.');
+        $migrate->createReplication();
 
 //        Create DB sharing
         $this->getLogger()->info('Creating DB sharing.');
@@ -75,7 +56,13 @@ class Component extends BaseComponent
 
         $this->getLogger()->info('Post-migration cleanup.');
         $migrate->postMigrationCleanup();
-//        $migrate->postMigrationCheck();
+    }
+
+    protected function runCheckMigratedData(): void
+    {
+        $migrate = MigrateFactory::create($this->getLogger(), $this->getConfig());
+
+        $migrate->postMigrationCheck();
     }
 
     public function getConfig(): Config
@@ -83,6 +70,22 @@ class Component extends BaseComponent
         /** @var Config $config */
         $config = parent::getConfig();
         return $config;
+    }
+
+    public function execute(): void
+    {
+        $action = $this->getConfig()->getAction();
+        if (!$this->isSyncAction()) {
+            $this->$action();
+            return;
+        }
+
+        parent::execute();
+    }
+
+    public function isSyncAction(): bool
+    {
+        return !in_array($this->getConfig()->getAction(), ['run', self::ACTION_CHECK_MIGRATED_DATA]);
     }
 
     protected function getConfigClass(): string

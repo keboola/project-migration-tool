@@ -145,6 +145,9 @@ class Migrate
 
     public function createReplication(): void
     {
+        if ($this->sourceConnection->getRegion() !== $this->destinationConnection->getRegion()) {
+            return;
+        }
         foreach ($this->databases as $database) {
             //            Allow replication on source database
             $this->sourceConnection->query(sprintf(
