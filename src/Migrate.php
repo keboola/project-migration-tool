@@ -24,7 +24,11 @@ class Migrate
 
     private array $databases;
 
-    private string $mainMigrationRole;
+    private array $useWarehouse;
+
+    private string $mainMigrationRoleSourceAccount;
+
+    private string $mainMigrationRoleTargetAccount;
 
     private const MIGRATION_SHARE_PREFIX = 'MIGRATION_SHARE_';
 
@@ -41,20 +45,22 @@ class Migrate
         Connection $migrateConnection,
         Connection $destinationConnection,
         array $databases,
-        string $mainMigrationRole
+        string $mainMigrationRoleSourceAccount,
+        string $mainMigrationRoleTargetAccount
     ) {
         $this->logger = $logger;
         $this->sourceConnection = $sourceConnection;
         $this->migrateConnection = $migrateConnection;
         $this->destinationConnection = $destinationConnection;
         $this->databases = $databases;
-        $this->mainMigrationRole = $mainMigrationRole;
+        $this->mainMigrationRoleSourceAccount = $mainMigrationRoleSourceAccount;
+        $this->mainMigrationRoleTargetAccount = $mainMigrationRoleTargetAccount;
     }
 
     public function cleanupAccount(bool $dryRun = true): void
     {
         $sqls = [];
-        $currentRole = $this->mainMigrationRole;
+        $currentRole = $this->mainMigrationRoleTargetAccount;
         foreach ($this->databases as $database) {
             $dbExists = $this->destinationConnection->fetchAll(sprintf(
                 'SHOW DATABASES LIKE %s;',
@@ -112,12 +118,8 @@ class Migrate
                 'DROP USER IF EXISTS %s;',
                 QueryBuilder::quoteIdentifier($grantOfRole['grantee_name'])
             );
-            $sqls[] = sprintf('DROP ROLE IF EXISTS %s;', QueryBuilder::quoteIdentifier($databaseRole));
 
-            if ($currentRole !== $this->mainMigrationRole) {
-                $currentRole = $this->mainMigrationRole;
-                $sqls[] = sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($currentRole));
-            }
+            $sqls[] = sprintf('DROP ROLE IF EXISTS %s;', QueryBuilder::quoteIdentifier($databaseRole));
 
             $sqls[] = sprintf(
                 'DROP DATABASE IF EXISTS %s;',
@@ -187,7 +189,7 @@ CREATE WAREHOUSE IF NOT EXISTS "migrate"
 SQL;
             $this->migrateConnection->query($sql);
 
-            $this->migrateConnection->query('USE WAREHOUSE "migrate";');
+            $this->migrateConnection->query('USE WAREHOUSE "MIGRATE";');
 
             //            Run replicate of data
             $this->migrateConnection->query(sprintf(
@@ -343,7 +345,6 @@ SQL;
                 'databases' => $databaseGrants,
                 'schemas' => $schemasGrants,
                 'tables' => $tablesGrants,
-                'other' => $otherGrants,
             ] = Helper::parseGrantsToObjects($grants[$databaseRole]);
 
             $this->destinationConnection->useRole($mainRole);
@@ -474,6 +475,7 @@ SQL;
                         $ownershipOnTable['granted_by']
                     );
                     $this->destinationConnection->useRole($ownershipOnTable['granted_by']);
+                    $this->destinationConnection->useWarehouse($ownershipOnTable['granted_by']);
 
                     if ($this->canCloneTable($database, $schemaName, $tableName)) {
                         $this->logger->info(sprintf('Cloning table "%s" from OLD database', $tableName));
@@ -589,20 +591,14 @@ SQL;
         }
 
         $warehouses = array_filter($mainRoleWithGrants['assignedGrants'], fn($v) => $v['granted_on'] === 'WAREHOUSE');
-        $useWarehouse = false;
         foreach ($warehouses as $warehouse) {
             $warehouseSize = self::createWarehouse($warehouse);
             $this->destinationConnection->assignGrantToRole($warehouse);
 
-            if ($useWarehouse === false || $warehouseSize === 'X-Small') {
-                $useWarehouse = $warehouse;
+            if (!isset($this->useWarehouse) || $warehouseSize === 'X-Small') {
+                $this->useWarehouse = $warehouse;
             }
         }
-
-        $this->destinationConnection->query(sprintf(
-            'USE WAREHOUSE %s',
-            QueryBuilder::quoteIdentifier($useWarehouse['name'])
-        ));
 
         $this->destinationConnection->query(sprintf(
             'CREATE USER IF NOT EXISTS %s PASSWORD=%s DEFAULT_ROLE=%s',
@@ -632,7 +628,7 @@ SQL;
             $this->destinationConnection->assignGrantToRole($projectUser);
         }
 
-        $this->destinationConnection->useRole($this->mainMigrationRole);
+        $this->destinationConnection->useRole($this->mainMigrationRoleTargetAccount);
 
         $this->destinationConnection->query(sprintf(
             'GRANT ROLE %s TO ROLE SYSADMIN;',
@@ -683,8 +679,8 @@ SQL;
 
     public function grantRoleToUsers(): void
     {
-        $this->destinationConnection->useRole($this->mainMigrationRole);
-        $this->sourceConnection->useRole($this->mainMigrationRole);
+        $this->destinationConnection->useRole($this->mainMigrationRoleTargetAccount);
+        $this->sourceConnection->useRole($this->mainMigrationRoleSourceAccount);
 
         foreach ($this->usedUsers as $user) {
             $grants = $this->sourceConnection->fetchAll(sprintf(
@@ -706,7 +702,7 @@ SQL;
 
     public function postMigrationCleanup(): void
     {
-        $this->destinationConnection->useRole($this->mainMigrationRole);
+        $this->destinationConnection->useRole($this->mainMigrationRoleTargetAccount);
         foreach ($this->databases as $database) {
             $removeDatabases = [
                 $database . '_OLD',
@@ -726,7 +722,7 @@ SQL;
             ));
 
             foreach ($userRoles as $userRole) {
-                if ($userRole['role'] === $this->mainMigrationRole) {
+                if ($userRole['role'] === $this->mainMigrationRoleTargetAccount) {
                     continue;
                 }
                 $this->destinationConnection->query(sprintf(
@@ -1059,7 +1055,7 @@ SQL;
             'granted_to' => 'ROLE',
             'grantee_name' => $role,
             'grant_option' => 'false',
-            'granted_by' => $this->mainMigrationRole,
+            'granted_by' => $this->mainMigrationRoleTargetAccount,
         ]);
     }
 
@@ -1097,6 +1093,7 @@ SQL;
 
     private function canCloneTable(string $database, string $schema, string $table): bool
     {
+
         $sqlTemplate = 'SELECT max("_timestamp") as "maxTimestamp" FROM %s.%s.%s';
 
         try {
@@ -1122,7 +1119,7 @@ SQL;
     private function grantsPrivilegesToOldDatabase(string $database, string $databaseRole): void
     {
         $currentRole = $this->destinationConnection->getCurrentRole();
-        $this->destinationConnection->useRole($this->mainMigrationRole);
+        $this->destinationConnection->useRole($this->mainMigrationRoleTargetAccount);
         $dbExists = $this->destinationConnection->fetchAll(sprintf(
             'SHOW DATABASES LIKE %s',
             QueryBuilder::quote($database . '_OLD')

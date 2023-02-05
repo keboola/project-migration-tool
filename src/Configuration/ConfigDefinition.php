@@ -17,7 +17,8 @@ class ConfigDefinition extends BaseConfigDefinition
         /** @noinspection NullPointerExceptionInspection */
         $parametersNode
             ->children()
-                ->scalarNode('migrationRole')->end()
+                ->scalarNode('migrationRoleSource')->end()
+                ->scalarNode('migrationRoleTarget')->end()
                 ->arrayNode('migrateDatabases')
                     ->scalarPrototype()->end()
                 ->end()

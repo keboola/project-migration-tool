@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ProjectMigrationTool\Snowflake;
 
+use Keboola\Component\UserException;
 use Keboola\SnowflakeDbAdapter\Connection as AdapterConnection;
 use Keboola\SnowflakeDbAdapter\QueryBuilder;
 
@@ -15,14 +16,42 @@ class Connection extends AdapterConnection
 
     private ?string $actualRole = null;
 
+    private string $defaultRole;
+
+    private array $roleWarehouses = [];
+
+    public function __construct(array $options, string $defaultRole)
+    {
+        $this->defaultRole = $defaultRole;
+        parent::__construct($options);
+    }
+
     public function useRole(string $roleName): void
     {
-        if ($this->actualRole === $roleName) {
+        if ($roleName === 'ACCOUNTADMIN') {
+            $roleName = $this->defaultRole;
+        }
+        if ($roleName === $this->actualRole) {
             return;
         }
         $this->query(sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($roleName)));
 
         $this->actualRole = $roleName;
+    }
+
+    public function useWarehouse(string $role): void
+    {
+        if (empty($this->roleWarehouses[$role])) {
+            throw new UserException(sprintf(
+                'The role "%s" cannot use any warehouses',
+                $role
+            ));
+        }
+
+        $this->query(sprintf(
+            'USE WAREHOUSE %s;',
+            QueryBuilder::quoteIdentifier(current($this->roleWarehouses[$role]))
+        ));
     }
 
     public function getRegion(): string
@@ -78,6 +107,10 @@ class Connection extends AdapterConnection
     public function assignGrantToRole(array $grant): void
     {
         $this->useRole($grant['granted_by']);
+
+        if ($grant['privilege'] === 'USAGE' && $grant['granted_on'] === 'WAREHOUSE') {
+            $this->roleWarehouses[$grant['grantee_name']][] = $grant['name'];
+        }
 
         if ($grant['privilege'] === 'USAGE' && $grant['granted_on'] === 'ROLE') {
             $this->query(sprintf(

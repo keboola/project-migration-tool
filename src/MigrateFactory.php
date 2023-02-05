@@ -14,14 +14,23 @@ class MigrateFactory
     {
         //        Create database connections
         $logger->info('Connecting to databases.');
-        $sourceSnflkConnection = ConnectionFactory::create('source');
-        $migrateSnflkConnection = ConnectionFactory::create('migrate');
-        $destinationSnflkConnection = ConnectionFactory::create('destination');
+        $sourceSnflkConnection = ConnectionFactory::create(
+            'source',
+            $config->getMigrationRoleSourceAccount()
+        );
+        $migrateSnflkConnection = ConnectionFactory::create(
+            'migrate',
+            $config->getMigrationRoleSourceAccount()
+        );
+        $destinationSnflkConnection = ConnectionFactory::create(
+            'destination',
+            $config->getMigrationRoleTargetAccount()
+        );
 
         //        Switch to main migration role (e.g. ACCOUNTADMIN)
-        $sourceSnflkConnection->useRole($config->getMigrationRole());
-        $migrateSnflkConnection->useRole($config->getMigrationRole());
-        $destinationSnflkConnection->useRole($config->getMigrationRole());
+        $sourceSnflkConnection->useRole($config->getMigrationRoleSourceAccount());
+        $migrateSnflkConnection->useRole($config->getMigrationRoleSourceAccount());
+        $destinationSnflkConnection->useRole($config->getMigrationRoleTargetAccount());
 
         return new Migrate(
             $logger,
@@ -29,7 +38,8 @@ class MigrateFactory
             $migrateSnflkConnection,
             $destinationSnflkConnection,
             $config->getDatabases(),
-            $config->getMigrationRole()
+            $config->getMigrationRoleSourceAccount(),
+            $config->getMigrationRoleTargetAccount()
         );
     }
 }
