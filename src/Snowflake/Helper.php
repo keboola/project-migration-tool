@@ -57,7 +57,10 @@ class Helper
             foreach ($role['assignedFutureGrants'] as $assignedFutureGrant) {
                 switch ($assignedFutureGrant['grant_on']) {
                     case 'TABLE':
-                        $assignedFutureGrant['name'] = preg_replace('/.<TABLE>$/', '', $assignedFutureGrant['name']);
+                        $assignedFutureGrant['name'] = self::removeStringFromEnd(
+                            '.<TABLE>',
+                            $assignedFutureGrant['name']
+                        );
                         $tmp['futureGrants']['tables'][] = $assignedFutureGrant;
                         break;
                     default:
@@ -97,5 +100,11 @@ class Helper
                 return in_array($v['name'], $validSchema);
             }
         );
+    }
+
+    public static function removeStringFromEnd(string $haystack, string $needle): string
+    {
+        $needle = preg_quote($needle, '/');
+        return preg_replace("/$needle$/", '', $haystack);
     }
 }

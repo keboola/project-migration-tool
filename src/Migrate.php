@@ -104,7 +104,7 @@ class Migrate
                     $sqls[] = sprintf(
                         'REVOKE %s ON FUTURE TABLES IN SCHEMA %s FROM ROLE %s',
                         $futureGrant['privilege'],
-                        preg_replace('/.<TABLE>$/', '', $futureGrant['name']),
+                        Helper::removeStringFromEnd('.<TABLE>', $futureGrant['name']),
                         QueryBuilder::quoteIdentifier($futureGrant['grantee_name']),
                     );
                 }
