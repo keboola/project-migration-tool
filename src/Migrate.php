@@ -57,7 +57,7 @@ class Migrate
         $this->mainMigrationRoleTargetAccount = $mainMigrationRoleTargetAccount;
     }
 
-    public function cleanupAccount(bool $dryRun = true): void
+    public function cleanupAccount(string $mainRoleName, bool $dryRun = true): void
     {
         $sqls = [];
         $currentRole = $this->mainMigrationRoleTargetAccount;
@@ -88,13 +88,14 @@ class Migrate
             foreach ($data['ROLE'] ?? [] as $role) {
                 if ($role['granted_by'] !== $currentRole) {
                     $currentRole = $role['granted_by'];
-                    $sqls[] = sprintf(
-                        'GRANT ROLE %s TO USER %s;',
-                        QueryBuilder::quoteIdentifier($currentRole),
-                        QueryBuilder::quoteIdentifier((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'))
-                    );
                     $sqls[] = sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($currentRole));
                 }
+                $this->destinationConnection->useRole($mainRoleName);
+                $this->destinationConnection->query(sprintf(
+                    'GRANT ROLE %s TO USER %s;',
+                    QueryBuilder::quoteIdentifier($currentRole),
+                    QueryBuilder::quoteIdentifier((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'))
+                ));
                 $this->destinationConnection->useRole($role['granted_by']);
                 $futureGrants = $this->destinationConnection->fetchAll(sprintf(
                     'SHOW FUTURE GRANTS TO ROLE %s',
@@ -176,6 +177,7 @@ class Migrate
                 $this->migrateConnection->getRegion(),
                 $this->migrateConnection->getAccount()
             ));
+            $this->sourceConnection->useRole($this->sourceConnection->getOwnershipRoleOnDatabase($database));
 
             //            Waiting for previous SQL query
             sleep(1);
@@ -757,10 +759,14 @@ SQL;
                 QueryBuilder::quoteIdentifier((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'))
             ));
 
-            $this->destinationConnection->useRole($this->mainMigrationRoleTargetAccount);
-            foreach ($userRoles as $userRole) {
+            foreach (array_reverse($userRoles) as $userRole) {
                 if ($userRole['role'] === $this->mainMigrationRoleTargetAccount) {
                     continue;
+                }
+                if ($userRole['granted_by']) {
+                    $this->destinationConnection->useRole($userRole['granted_by']);
+                } else {
+                    $this->destinationConnection->useRole($this->mainMigrationRoleTargetAccount);
                 }
                 $this->destinationConnection->query(sprintf(
                     'REVOKE ROLE %s FROM USER %s',
@@ -1008,6 +1014,7 @@ SQL;
             $this->usedUsers[] = $userGrant['name'];
         }
 
+        $this->sourceConnection->useRole($this->mainMigrationRoleSourceAccount);
         $describeUser = $this->sourceConnection->fetchAll(sprintf(
             'SHOW USERS LIKE %s',
             QueryBuilder::quote($userGrant['name'])

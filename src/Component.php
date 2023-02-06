@@ -16,10 +16,14 @@ class Component extends BaseComponent
     {
         $migrate = MigrateFactory::create($this->getLogger(), $this->getConfig());
 
+//        Get main role
+        $this->getLogger()->info('Getting main role with grants');
+        $mainRoleWithGrants = $migrate->getMainRoleWithGrants();
+
 //        Cleanup destination account
         if ($this->getConfig()->getSynchronizeRun()) {
             $this->getLogger()->info('Pre-migration cleanup.');
-            $migrate->cleanupAccount($this->getConfig()->getSynchronizeDryRun());
+            $migrate->cleanupAccount($mainRoleWithGrants['name'], $this->getConfig()->getSynchronizeDryRun());
         }
 
 //        Create DB replication
@@ -33,10 +37,6 @@ class Component extends BaseComponent
 //        Export grants from source database
         $this->getLogger()->info('Exporting grants of roles.');
         $rolesGrants = $migrate->exportRolesGrants();
-
-//        Get main role
-        $this->getLogger()->info('Getting main role with grants');
-        $mainRoleWithGrants = $migrate->getMainRoleWithGrants();
 
 //        Create MainRole in target snflk account
         $this->getLogger()->info('Creating main role in target account.');
