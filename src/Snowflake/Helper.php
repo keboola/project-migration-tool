@@ -4,46 +4,64 @@ declare(strict_types=1);
 
 namespace ProjectMigrationTool\Snowflake;
 
+use Keboola\SnowflakeDbAdapter\QueryBuilder;
+
 class Helper
 {
     public static function parseGrantsToObjects(array $ownershipOnObjectsInDatabase): array
     {
         $tmp = [
-            'account' =>[],
-            'databases' => [],
-            'schemas' => [],
-            'tables' => [],
-            'roles' => [],
-            'warehouse' => [],
-            'user' => [],
-            'other' => [],
+            'grants' => [
+                'account' => [],
+                'databases' => [],
+                'schemas' => [],
+                'tables' => [],
+                'roles' => [],
+                'warehouse' => [],
+                'user' => [],
+                'other' => [],
+            ],
+            'futureGrants' => [
+                'tables' => [],
+                'other' => [],
+            ],
         ];
         foreach ($ownershipOnObjectsInDatabase as $role) {
             foreach ($role['assignedGrants'] as $assignedGrant) {
                 switch ($assignedGrant['granted_on']) {
                     case 'DATABASE':
-                        $tmp['databases'][] = $assignedGrant;
+                        $tmp['grants']['databases'][] = $assignedGrant;
                         break;
                     case 'SCHEMA':
-                        $tmp['schemas'][] = $assignedGrant;
+                        $tmp['grants']['schemas'][] = $assignedGrant;
                         break;
                     case 'TABLE':
-                        $tmp['tables'][] = $assignedGrant;
+                        $tmp['grants']['tables'][] = $assignedGrant;
                         break;
                     case 'ROLE':
-                        $tmp['roles'][] = $assignedGrant;
+                        $tmp['grants']['roles'][] = $assignedGrant;
                         break;
                     case 'ACCOUNT':
-                        $tmp['account'][] = $assignedGrant;
+                        $tmp['grants']['account'][] = $assignedGrant;
                         break;
                     case 'WAREHOUSE':
-                        $tmp['warehouse'][] = $assignedGrant;
+                        $tmp['grants']['warehouse'][] = $assignedGrant;
                         break;
                     case 'USER':
-                        $tmp['user'][] = $assignedGrant;
+                        $tmp['grants']['user'][] = $assignedGrant;
                         break;
                     default:
-                        $tmp['other'][] = $assignedGrant;
+                        $tmp['grants']['other'][] = $assignedGrant;
+                }
+            }
+            foreach ($role['assignedFutureGrants'] as $assignedFutureGrant) {
+                switch ($assignedFutureGrant['grant_on']) {
+                    case 'TABLE':
+                        $assignedFutureGrant['name'] = preg_replace('/.<TABLE>$/', '', $assignedFutureGrant['name']);
+                        $tmp['futureGrants']['tables'][] = $assignedFutureGrant;
+                        break;
+                    default:
+                        $tmp['futureGrants']['other'][] = $assignedFutureGrant;
                 }
             }
         }
@@ -59,5 +77,25 @@ class Helper
             $randomString .= $characters[random_int(0, strlen($characters) - 1)];
         }
         return $randomString;
+    }
+
+    public static function filterSchemaGrants(string $database, string $schemaName, array $schemasGrants): array
+    {
+        return array_filter(
+            $schemasGrants,
+            function (array $v) use ($database, $schemaName) {
+                $validSchema = [
+                    sprintf('%s.%s', $database, $schemaName),
+                    sprintf('%s.%s', $database, QueryBuilder::quoteIdentifier($schemaName)),
+                    sprintf('%s.%s', QueryBuilder::quoteIdentifier($database), $schemaName),
+                    sprintf(
+                        '%s.%s',
+                        QueryBuilder::quoteIdentifier($database),
+                        QueryBuilder::quoteIdentifier($schemaName)
+                    ),
+                ];
+                return in_array($v['name'], $validSchema);
+            }
+        );
     }
 }

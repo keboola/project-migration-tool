@@ -118,7 +118,7 @@ class Connection extends AdapterConnection
                 $grant['granted_on'],
                 $grant['name'],
                 $grant['granted_to'],
-                $grant['grantee_name'],
+                QueryBuilder::quoteIdentifier($grant['grantee_name']),
                 $grant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
             ));
         } else {
@@ -128,9 +128,42 @@ class Connection extends AdapterConnection
                 $grant['granted_on'],
                 $grant['granted_on'] !== 'ACCOUNT' ? $grant['name'] : '',
                 $grant['granted_to'],
-                $grant['grantee_name'],
+                QueryBuilder::quoteIdentifier($grant['grantee_name']),
                 $grant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
             ));
+        }
+    }
+
+    public function assignFutureGrantToRole(array $schemaFutureGrant): void
+    {
+        switch ($schemaFutureGrant['grant_on']) {
+            case 'TABLE':
+                $this->query(sprintf(
+                    'GRANT %s ON FUTURE TABLES IN SCHEMA %s TO ROLE %s %s',
+                    $schemaFutureGrant['privilege'],
+                    $schemaFutureGrant['name'],
+                    QueryBuilder::quoteIdentifier($schemaFutureGrant['grantee_name']),
+                    $schemaFutureGrant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
+                ));
+                break;
+            default:
+                throw new UserException('Unknown future grant on ' . $schemaFutureGrant['grant_on']);
+        }
+    }
+
+    public function revokeFutureGrantFromRole(array $schemaFutureGrant): void
+    {
+        switch ($schemaFutureGrant['grant_on']) {
+            case 'TABLE':
+                $this->query(sprintf(
+                    'REVOKE %s ON FUTURE TABLES IN SCHEMA %s FROM ROLE %s',
+                    $schemaFutureGrant['privilege'],
+                    $schemaFutureGrant['name'],
+                    QueryBuilder::quoteIdentifier($schemaFutureGrant['grantee_name']),
+                ));
+                break;
+            default:
+                throw new UserException('Unknown future grant on ' . $schemaFutureGrant['grant_on']);
         }
     }
 
