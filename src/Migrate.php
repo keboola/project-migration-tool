@@ -904,6 +904,45 @@ SQL;
         }
     }
 
+    public function printUnusedGrants(array $grants): void
+    {
+        foreach ($this->databases as $database) {
+            $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
+            [
+                'grants' => [
+                    'other' => $otherGrants,
+                ],
+                'futureGrants' => [
+                    'other' => $otherFutureGrants,
+                ],
+            ] = Helper::parseGrantsToObjects($grants[$databaseRole]);
+
+            foreach ($otherGrants as $grant) {
+                $this->logger->alert(sprintf(
+                    'Unused grant "%s": GRANT %s ON %s %s TO %s %s %s',
+                    $grant['name'],
+                    $grant['privilege'],
+                    $grant['granted_on'],
+                    $grant['granted_on'] !== 'ACCOUNT' ? $grant['name'] : '',
+                    $grant['granted_to'],
+                    QueryBuilder::quoteIdentifier($grant['grantee_name']),
+                    $grant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
+                ));
+            }
+
+            foreach ($otherFutureGrants as $grant) {
+                $this->logger->alert(sprintf(
+                    'Unused FUTURE grant "%s": GRANT %s ON FUTURE TABLES IN SCHEMA %s TO ROLE %s %s',
+                    $grant['name'],
+                    $grant['privilege'],
+                    $grant['name'],
+                    QueryBuilder::quoteIdentifier($grant['grantee_name']),
+                    $grant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
+                ));
+            }
+        }
+    }
+
     private function compareData(string $group, string $itemNameKey, string $sql): void
     {
         $sourceData = $this->sourceConnection->fetchAll($sql);

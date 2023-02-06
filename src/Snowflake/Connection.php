@@ -151,22 +151,6 @@ class Connection extends AdapterConnection
         }
     }
 
-    public function revokeFutureGrantFromRole(array $schemaFutureGrant): void
-    {
-        switch ($schemaFutureGrant['grant_on']) {
-            case 'TABLE':
-                $this->query(sprintf(
-                    'REVOKE %s ON FUTURE TABLES IN SCHEMA %s FROM ROLE %s',
-                    $schemaFutureGrant['privilege'],
-                    $schemaFutureGrant['name'],
-                    QueryBuilder::quoteIdentifier($schemaFutureGrant['grantee_name']),
-                ));
-                break;
-            default:
-                throw new UserException('Unknown future grant on ' . $schemaFutureGrant['grant_on']);
-        }
-    }
-
     public function getOwnershipRoleOnDatabase(string $database): string
     {
         $grantsOnDatabase = $this->fetchAll(sprintf(

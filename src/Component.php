@@ -56,6 +56,8 @@ class Component extends BaseComponent
 
         $this->getLogger()->info('Post-migration cleanup.');
         $migrate->postMigrationCleanup();
+
+        $migrate->printUnusedGrants($rolesGrants);
     }
 
     protected function runCheckMigratedData(): void
