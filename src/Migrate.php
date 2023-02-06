@@ -379,10 +379,18 @@ SQL;
             $shareDbName = $database . '_SHARE';
             $oldDbName = $database . '_OLD';
 
+            $sourceDatabases = $this->sourceConnection->fetchAll(sprintf(
+                'SHOW DATABASES LIKE %s',
+                QueryBuilder::quote($database)
+            ));
+            assert(count($sourceDatabases) === 1);
+            $sourceDatabase = current($sourceDatabases);
+
             $this->logger->info(sprintf('Migrate database "%s".', $database));
             $this->destinationConnection->query(sprintf(
-                'CREATE DATABASE %s;',
-                QueryBuilder::quoteIdentifier($database)
+                'CREATE DATABASE %s DATA_RETENTION_TIME_IN_DAYS=%s;',
+                QueryBuilder::quoteIdentifier($database),
+                $sourceDatabase['retention_time']
             ));
 
             foreach ($databaseGrants as $databaseGrant) {

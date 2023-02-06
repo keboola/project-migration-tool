@@ -105,6 +105,6 @@ class Helper
     public static function removeStringFromEnd(string $haystack, string $needle): string
     {
         $needle = preg_quote($needle, '/');
-        return preg_replace("/$needle$/", '', $haystack);
+        return (string) preg_replace("/$needle$/", '', $haystack);
     }
 }
