@@ -58,8 +58,8 @@ class Helper
                 switch ($assignedFutureGrant['grant_on']) {
                     case 'TABLE':
                         $assignedFutureGrant['name'] = self::removeStringFromEnd(
-                            '.<TABLE>',
-                            $assignedFutureGrant['name']
+                            $assignedFutureGrant['name'],
+                            '.<TABLE>'
                         );
                         $tmp['futureGrants']['tables'][] = $assignedFutureGrant;
                         break;

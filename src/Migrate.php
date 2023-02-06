@@ -104,7 +104,7 @@ class Migrate
                     $sqls[] = sprintf(
                         'REVOKE %s ON FUTURE TABLES IN SCHEMA %s FROM ROLE %s',
                         $futureGrant['privilege'],
-                        Helper::removeStringFromEnd('.<TABLE>', $futureGrant['name']),
+                        Helper::removeStringFromEnd($futureGrant['name'], '.<TABLE>'),
                         QueryBuilder::quoteIdentifier($futureGrant['grantee_name']),
                     );
                 }
@@ -725,17 +725,22 @@ SQL;
 
     public function postMigrationCleanup(): void
     {
-        $this->destinationConnection->useRole($this->mainMigrationRoleTargetAccount);
         foreach ($this->databases as $database) {
-            $removeDatabases = [
+            $databases = [
                 $database . '_OLD',
                 $database . '_SHARE',
             ];
 
+            $removeDatabases = array_filter(
+                $this->destinationConnection->fetchAll('SHOW DATABASES;'),
+                fn($v) => in_array($v['name'], $databases)
+            );
+
             foreach ($removeDatabases as $removeDatabase) {
+                $this->destinationConnection->useRole($removeDatabase['owner']);
                 $this->destinationConnection->query(sprintf(
                     'DROP DATABASE IF EXISTS %s',
-                    QueryBuilder::quoteIdentifier($removeDatabase)
+                    QueryBuilder::quoteIdentifier($removeDatabase['name'])
                 ));
             }
 
@@ -744,6 +749,7 @@ SQL;
                 QueryBuilder::quoteIdentifier((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'))
             ));
 
+            $this->destinationConnection->useRole($this->mainMigrationRoleTargetAccount);
             foreach ($userRoles as $userRole) {
                 if ($userRole['role'] === $this->mainMigrationRoleTargetAccount) {
                     continue;
