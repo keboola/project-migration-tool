@@ -947,70 +947,45 @@ SQL;
     {
         $sourceData = $this->sourceConnection->fetchAll($sql);
         $targetData = $this->destinationConnection->fetchAll($sql);
+        $sourceData = array_combine(array_column($sourceData, 'ID'), $sourceData);
+        $targetData = array_combine(array_column($targetData, 'ID'), $targetData);
 
         if (count($sourceData) !== count($targetData)) {
             $this->logger->alert(sprintf(
-                '%s: Source data count (%s) not equils target data count (%s)',
+                '%s: Source data count (%s) not equal to target data count (%s)',
                 $group,
                 count($sourceData),
                 count($targetData)
             ));
         }
-        $sourceData = array_combine(array_map(fn($v) => $v['ID'], $sourceData), $sourceData);
-        $targetData = array_combine(array_map(fn($v) => $v['ID'], $targetData), $targetData);
 
-        array_walk($sourceData, fn(&$v) => $v = serialize($v));
-        array_walk($targetData, fn(&$v) => $v = serialize($v));
+        foreach ($sourceData as $id => $item) {
+            $itemName = strval($item[$itemNameKey]);
+            if (!isset($targetData[$id])) {
+                $this->logger->alert(sprintf('%s: Item "%s" doesn\'t exist in target account', $group, $itemName));
+                continue;
+            }
 
-        $diffs = [
-            array_diff($sourceData, $targetData),
-            array_diff($targetData, $sourceData),
-        ];
-        $print = [];
-        foreach ($diffs as $diff) {
-            foreach ($diff as $k => $serializeItem) {
-                if (!isset($sourceData[$k])) {
-                    $this->logger->alert(sprintf('%s: Item "%s" doesn\'t exists in source account', $group, $k));
-                    continue;
-                }
-                if (!isset($targetData[$k])) {
-                    $this->logger->alert(sprintf('%s: Item "%s" doesn\'t exists in target account', $group, $k));
-                    continue;
-                }
-                $itemSource = (array) unserialize($sourceData[$k]);
-                $itemName = strval($itemSource[$itemNameKey]);
-                if (in_array($itemName, $print)) {
-                    continue;
-                }
-                $itemTarget = (array) unserialize($targetData[$k]);
-                $itemDiffs = [
-                    'target' => array_diff($itemSource, $itemTarget),
-                    'source' => array_diff($itemTarget, $itemSource),
-                ];
-
-                foreach ($itemDiffs as $missingIn => $itemDiff) {
-                    $this->printDiffAlert($group, $itemName, $missingIn, $itemDiff);
-                }
-
-                $print[] = $itemName;
+            $targetItem = $targetData[$id];
+            $sourceDiff = array_diff($item, $targetItem);
+            $targetDiff = array_diff($targetItem, $item);
+            if ($sourceDiff) {
+                $this->logger->alert(sprintf(
+                    '%s: "%s" is not the same. Missing in source account (%s)',
+                    $group,
+                    $itemName,
+                    implode(';', $sourceDiff)
+                ));
+            }
+            if ($targetDiff) {
+                $this->logger->alert(sprintf(
+                    '%s: "%s" is not the same. Missing in target account (%s)',
+                    $group,
+                    $itemName,
+                    implode(';', $targetDiff)
+                ));
             }
         }
-    }
-
-    private function printDiffAlert(string $group, string $name, string $missingIn, array $data): void
-    {
-        if (!$data) {
-            return;
-        }
-        array_walk($data, fn(&$v, $k) => $v = sprintf('%s: %s', $k, $v));
-
-        $this->logger->alert(sprintf(
-            '%s: "%s" is not same. Missing in %s account (%s)',
-            $group,
-            $name,
-            $missingIn,
-            implode(';', $data)
-        ));
     }
 
     private function listRolesAndUsers(string $role): array
