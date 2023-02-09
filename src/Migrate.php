@@ -233,12 +233,7 @@ SQL;
             $shareName = sprintf('%s%s', self::MIGRATION_SHARE_PREFIX, strtoupper($database));
 
             $connection->query(sprintf(
-                'DROP SHARE IF EXISTS %s;',
-                QueryBuilder::quoteIdentifier($shareName)
-            ));
-
-            $connection->query(sprintf(
-                'CREATE SHARE %s;',
+                'CREATE SHARE IF NOT EXISTS %s;',
                 QueryBuilder::quoteIdentifier($shareName)
             ));
 

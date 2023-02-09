@@ -26,6 +26,14 @@ class Connection extends AdapterConnection
         parent::__construct($options);
     }
 
+    public function query(string $sql, array $bind = []): void
+    {
+        if ($this->getCurrentRole() === 'ACCOUNTADMIN' && str_starts_with($sql, 'DROP')) {
+            throw new UserException('Run DROP query on ACCOUNTADMIN role is not allowed.');
+        }
+        parent::query($sql, $bind);
+    }
+
     public function useRole(string $roleName): void
     {
         if ($roleName === 'ACCOUNTADMIN') {
