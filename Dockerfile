@@ -2,6 +2,8 @@ FROM php:8-cli
 
 ARG COMPOSER_FLAGS="--prefer-dist --no-interaction"
 ARG DEBIAN_FRONTEND=noninteractive
+ARG SNOWFLAKE_ODBC_VERSION=2.22.5
+ARG SNOWFLAKE_ODBC_GPG_KEY=37C7086698CB005C
 ENV COMPOSER_ALLOW_SUPERUSER 1
 ENV COMPOSER_PROCESS_TIMEOUT 3600
 
@@ -14,15 +16,53 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         locales \
         unzip \
+        unixodbc \
+        unixodbc-dev \
+        libpq-dev \
+        debsig-verify \
+        libicu-dev \
+        gnupg \
 	&& rm -r /var/lib/apt/lists/* \
 	&& sed -i 's/^# *\(en_US.UTF-8\)/\1/' /etc/locale.gen \
 	&& locale-gen \
 	&& chmod +x /tmp/composer-install.sh \
 	&& /tmp/composer-install.sh
 
+RUN docker-php-ext-configure intl \
+    && docker-php-ext-install intl
+
+# Install PHP odbc extension
+# https://github.com/docker-library/php/issues/103
+RUN set -x \
+    && docker-php-source extract \
+    && cd /usr/src/php/ext/odbc \
+    && phpize \
+    && sed -ri 's@^ *test +"\$PHP_.*" *= *"no" *&& *PHP_.*=yes *$@#&@g' configure \
+    && ./configure --with-unixODBC=shared,/usr \
+    && docker-php-ext-install odbc \
+    && docker-php-source delete
+
+#snoflake download + verify package
+COPY docker/drivers/snowflake-odbc-policy.pol /etc/debsig/policies/$SNOWFLAKE_ODBC_GPG_KEY/generic.pol
+COPY docker/drivers/simba.snowflake.ini /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
+ADD https://sfc-repo.azure.snowflakecomputing.com/odbc/linux/$SNOWFLAKE_ODBC_VERSION/snowflake-odbc-$SNOWFLAKE_ODBC_VERSION.x86_64.deb /tmp/snowflake-odbc.deb
+
 ENV LANGUAGE=en_US.UTF-8
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
+
+# check installed driver
+RUN mkdir -p ~/.gnupg \
+    && chmod 700 ~/.gnupg \
+    && echo "disable-ipv6" >> ~/.gnupg/dirmngr.conf \
+    && mkdir /usr/share/debsig/keyrings/$SNOWFLAKE_ODBC_GPG_KEY \
+    && if ! gpg --keyserver hkp://keys.gnupg.net --recv-keys $SNOWFLAKE_ODBC_GPG_KEY; then \
+            gpg --keyserver hkp://keyserver.ubuntu.com --recv-keys $SNOWFLAKE_ODBC_GPG_KEY;  \
+        fi \
+    && gpg --export $SNOWFLAKE_ODBC_GPG_KEY > /usr/share/debsig/keyrings/$SNOWFLAKE_ODBC_GPG_KEY/debsig.gpg \
+    && debsig-verify /tmp/snowflake-odbc.deb \
+    && gpg --batch --delete-key --yes $SNOWFLAKE_ODBC_GPG_KEY \
+    && dpkg -i /tmp/snowflake-odbc.deb
 
 ## Composer - deps always cached unless changed
 # First copy only composer files
