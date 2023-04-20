@@ -107,4 +107,12 @@ class Helper
         $needle = preg_quote($needle, '/');
         return (string) preg_replace("/$needle$/", '', $haystack);
     }
+
+    public static function quoteIdentifier(string $str): string
+    {
+        if (preg_match('/^".+"$/', preg_quote($str, '/'))) {
+            return $str;
+        }
+        return QueryBuilder::quoteIdentifier($str);
+    }
 }

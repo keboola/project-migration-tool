@@ -42,7 +42,7 @@ class Connection extends AdapterConnection
         if ($roleName === $this->actualRole) {
             return;
         }
-        $this->query(sprintf('USE ROLE %s;', QueryBuilder::quoteIdentifier($roleName)));
+        $this->query(sprintf('USE ROLE %s;', Helper::quoteIdentifier($roleName)));
 
         $this->actualRole = $roleName;
     }
@@ -58,7 +58,7 @@ class Connection extends AdapterConnection
 
         $this->query(sprintf(
             'USE WAREHOUSE %s;',
-            QueryBuilder::quoteIdentifier(current($this->roleWarehouses[$role]))
+            Helper::quoteIdentifier(current($this->roleWarehouses[$role]))
         ));
     }
 
@@ -98,7 +98,7 @@ class Connection extends AdapterConnection
             $this->useRole($role['granted_by']);
         }
 
-        $this->query(sprintf('CREATE ROLE IF NOT EXISTS %s', $role['name']));
+        $this->query(sprintf('CREATE ROLE IF NOT EXISTS %s', Helper::quoteIdentifier($role['name'])));
 
         $this->grantRoleToUser((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'), $role['name']);
     }
@@ -107,8 +107,8 @@ class Connection extends AdapterConnection
     {
         $this->query(sprintf(
             'GRANT ROLE %s TO USER %s',
-            QueryBuilder::quoteIdentifier($role),
-            QueryBuilder::quoteIdentifier($user)
+            Helper::quoteIdentifier($role),
+            Helper::quoteIdentifier($user)
         ));
     }
 
@@ -126,7 +126,7 @@ class Connection extends AdapterConnection
                 $grant['granted_on'],
                 $grant['name'],
                 $grant['granted_to'],
-                QueryBuilder::quoteIdentifier($grant['grantee_name']),
+                Helper::quoteIdentifier($grant['grantee_name']),
                 $grant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
             ));
         } else {
@@ -136,7 +136,7 @@ class Connection extends AdapterConnection
                 $grant['granted_on'],
                 $grant['granted_on'] !== 'ACCOUNT' ? $grant['name'] : '',
                 $grant['granted_to'],
-                QueryBuilder::quoteIdentifier($grant['grantee_name']),
+                Helper::quoteIdentifier($grant['grantee_name']),
                 $grant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
             ));
         }
@@ -150,7 +150,7 @@ class Connection extends AdapterConnection
                     'GRANT %s ON FUTURE TABLES IN SCHEMA %s TO ROLE %s %s',
                     $schemaFutureGrant['privilege'],
                     $schemaFutureGrant['name'],
-                    QueryBuilder::quoteIdentifier($schemaFutureGrant['grantee_name']),
+                    Helper::quoteIdentifier($schemaFutureGrant['grantee_name']),
                     $schemaFutureGrant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
                 ));
                 break;
@@ -163,7 +163,7 @@ class Connection extends AdapterConnection
     {
         $grantsOnDatabase = $this->fetchAll(sprintf(
             'SHOW GRANTS ON DATABASE %s;',
-            QueryBuilder::quoteIdentifier($database)
+            Helper::quoteIdentifier($database)
         ));
 
         $ownershipOnDatabase = array_filter($grantsOnDatabase, fn($v) => $v['privilege'] === 'OWNERSHIP');
