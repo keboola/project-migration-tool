@@ -15,22 +15,31 @@ class MigrateFactory
         //        Create database connections
         $logger->info('Connecting to databases.');
         $sourceSnflkConnection = ConnectionFactory::create(
-            'source',
-            $config->getMigrationRoleSourceAccount()
+            $config->getSourceSnowflakeHost(),
+            $config->getSourceSnowflakeUser(),
+            $config->getSourceSnowflakePassword(),
+            $config->getSourceSnowflakeWarehouse(),
+            $config->getSourceSnowflakeRole()
         );
         $migrateSnflkConnection = ConnectionFactory::create(
-            'migrate',
-            $config->getMigrationRoleSourceAccount()
+            $config->getMigrationSnowflakeHost(),
+            $config->getMigrationSnowflakeUser(),
+            $config->getMigrationSnowflakePassword(),
+            $config->getMigrationSnowflakeWarehouse(),
+            $config->getMigrationSnowflakeRole()
         );
         $destinationSnflkConnection = ConnectionFactory::create(
-            'destination',
-            $config->getMigrationRoleTargetAccount()
+            $config->getTargetSnowflakeHost(),
+            $config->getTargetSnowflakeUser(),
+            $config->getTargetSnowflakePassword(),
+            $config->getTargetSnowflakeWarehouse(),
+            $config->getTargetSnowflakeRole()
         );
 
         //        Switch to main migration role (e.g. ACCOUNTADMIN)
-        $sourceSnflkConnection->useRole($config->getMigrationRoleSourceAccount());
-        $migrateSnflkConnection->useRole($config->getMigrationRoleSourceAccount());
-        $destinationSnflkConnection->useRole($config->getMigrationRoleTargetAccount());
+        $sourceSnflkConnection->useRole($config->getSourceSnowflakeRole());
+        $migrateSnflkConnection->useRole($config->getMigrationSnowflakeRole());
+        $destinationSnflkConnection->useRole($config->getTargetSnowflakeRole());
 
         return new Migrate(
             $logger,
@@ -38,8 +47,8 @@ class MigrateFactory
             $migrateSnflkConnection,
             $destinationSnflkConnection,
             $config->getDatabases(),
-            $config->getMigrationRoleSourceAccount(),
-            $config->getMigrationRoleTargetAccount()
+            $config->getSourceSnowflakeRole(),
+            $config->getTargetSnowflakeRole()
         );
     }
 }

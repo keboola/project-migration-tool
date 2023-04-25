@@ -6,15 +6,20 @@ namespace ProjectMigrationTool\Snowflake;
 
 class ConnectionFactory
 {
-    public static function create(string $typeConnection, string $defaultRole): Connection
-    {
+    public static function create(
+        string $host,
+        string $user,
+        string $password,
+        string $warehouse,
+        string $role
+    ): Connection {
         $options = [
-            'host' => getenv(sprintf('SNOWFLAKE_%s_ACCOUNT_HOST', strtoupper($typeConnection))),
-            'user' => getenv(sprintf('SNOWFLAKE_%s_ACCOUNT_USERNAME', strtoupper($typeConnection))),
-            'password' => getenv(sprintf('SNOWFLAKE_%s_ACCOUNT_PASSWORD', strtoupper($typeConnection))),
-            'warehouse' => getenv(sprintf('SNOWFLAKE_%s_ACCOUNT_WAREHOUSE', strtoupper($typeConnection))),
+            'host' => $host,
+            'user' => $user,
+            'password' => $password,
+            'warehouse' => $warehouse,
         ];
 
-        return new Connection($options, $defaultRole);
+        return new Connection($options, $role);
     }
 }

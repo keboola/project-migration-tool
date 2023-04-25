@@ -22,6 +22,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         debsig-verify \
         libicu-dev \
         gnupg \
+        python3 \
+        python3-pip \
 	&& rm -r /var/lib/apt/lists/* \
 	&& sed -i 's/^# *\(en_US.UTF-8\)/\1/' /etc/locale.gen \
 	&& locale-gen \
@@ -63,6 +65,10 @@ RUN mkdir -p ~/.gnupg \
     && debsig-verify /tmp/snowflake-odbc.deb \
     && gpg --batch --delete-key --yes $SNOWFLAKE_ODBC_GPG_KEY \
     && dpkg -i /tmp/snowflake-odbc.deb
+
+# INstall data-diff
+RUN pip install data-diff
+RUN pip install 'data-diff[snowflake]'
 
 ## Composer - deps always cached unless changed
 # First copy only composer files

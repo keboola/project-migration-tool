@@ -67,7 +67,8 @@ class Component extends BaseComponent
         $this->getLogger()->info('Getting main role with grants');
         $mainRoleWithGrants = $migrate->getMainRoleWithGrants();
 
-        $migrate->postMigrationCheck($mainRoleWithGrants);
+        $migrate->postMigrationCheckStructure($mainRoleWithGrants);
+        $migrate->postMigrationCheckData($this->getConfig(), $mainRoleWithGrants);
     }
 
     public function getConfig(): Config

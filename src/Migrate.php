@@ -11,6 +11,7 @@ use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Snowflake\Connection;
 use ProjectMigrationTool\Snowflake\Helper;
 use Psr\Log\LoggerInterface;
+use Symfony\Component\Process\Process;
 
 class Migrate
 {
@@ -793,7 +794,7 @@ SQL;
         }
     }
 
-    public function postMigrationCheck(array $mainRoleWithGrants): void
+    public function postMigrationCheckStructure(array $mainRoleWithGrants): void
     {
         $warehouses = array_filter($mainRoleWithGrants['assignedGrants'], fn($v) => $v['granted_on'] === 'WAREHOUSE');
 
@@ -915,6 +916,130 @@ SQL;
 
             foreach ($compares as $compare) {
                 $this->compareData($compare['group'], $compare['itemNameKey'], $compare['sql']);
+            }
+        }
+    }
+
+    public function postMigrationCheckData(Config $config, array $mainRoleWithGrants): void
+    {
+        $sourceRegion = $this->sourceConnection->fetchAll(sprintf(
+            'SHOW regions LIKE %s',
+            QueryBuilder::quote($this->sourceConnection->getRegion())
+        ));
+
+        $targetRegion = $this->destinationConnection->fetchAll(sprintf(
+            'SHOW regions LIKE %s',
+            QueryBuilder::quote($this->destinationConnection->getRegion())
+        ));
+
+        $sourceAccount = sprintf(
+            '%s.%s',
+            $this->sourceConnection->getAccount(),
+            $sourceRegion[0]['region']
+        );
+        $targetAccount = sprintf(
+            '%s.%s',
+            $this->destinationConnection->getAccount(),
+            $targetRegion[0]['region']
+        );
+
+        $warehousesGrant = array_values(array_filter(
+            $mainRoleWithGrants['assignedGrants'],
+            fn($v) => $v['granted_on'] === 'WAREHOUSE' && $v['privilege'] === 'USAGE'
+        ));
+        assert(count($warehousesGrant) > 0);
+
+        foreach ($config->getDatabases() as $database) {
+            $schemas = $this->sourceConnection->fetchAll(sprintf(
+                'SHOW SCHEMAS IN DATABASE %s',
+                Helper::quoteIdentifier($database)
+            ));
+            foreach ($schemas as $schema) {
+                if (in_array($schema['name'], ['INFORMATION_SCHEMA', 'PUBLIC'])) {
+                    continue;
+                }
+                $this->sourceConnection->useRole($mainRoleWithGrants['name']);
+                $this->destinationConnection->useRole($mainRoleWithGrants['name']);
+                $this->sourceConnection->grantRoleToUser($config->getSourceSnowflakeUser(), $schema['owner']);
+                $this->destinationConnection->grantRoleToUser($config->getTargetSnowflakeUser(), $schema['owner']);
+                $this->sourceConnection->useRole($schema['owner']);
+
+                $tables = $this->sourceConnection->fetchAll(sprintf(
+                    'SHOW TABLES IN SCHEMA %s.%s',
+                    Helper::quoteIdentifier($database),
+                    Helper::quoteIdentifier($schema['name'])
+                ));
+                foreach ($tables as $table) {
+                    $primaryKeys = $this->sourceConnection->fetchAll(sprintf(
+                        'SHOW PRIMARY KEYS IN TABLE %s.%s.%s',
+                        Helper::quoteIdentifier($database),
+                        Helper::quoteIdentifier($schema['name']),
+                        Helper::quoteIdentifier($table['name'])
+                    ));
+                    if (!$primaryKeys) {
+                        $this->logger->warning(sprintf(
+                            'Table %s.%s.%s has no primary key. Skipping',
+                            $database,
+                            $schema['name'],
+                            $table['name']
+                        ));
+                        continue;
+                    }
+                    $primaryKeys = array_map(fn($v) => $v['column_name'], $primaryKeys);
+
+                    $columns = $this->sourceConnection->fetchAll(sprintf(
+                        'SHOW COLUMNS IN TABLE %s.%s.%s',
+                        Helper::quoteIdentifier($database),
+                        Helper::quoteIdentifier($schema['name']),
+                        Helper::quoteIdentifier($table['name'])
+                    ));
+                    $columns = array_map(fn($v) => $v['column_name'], $columns);
+                    $columns = array_filter($columns, fn($v) => !in_array($v, $primaryKeys));
+                    $columns = array_filter($columns, fn($v) => $v !== '_timestamp');
+
+                    $arguments = [
+                        'sourceAccount' => $sourceAccount,
+                        'sourceUser' => $config->getSourceSnowflakeUser(),
+                        'sourcePassword' => $config->getSourceSnowflakePassword(),
+                        'targetAccount' => $targetAccount,
+                        'targetUser' => $config->getTargetSnowflakeUser(),
+                        'targetPassword' => $config->getTargetSnowflakePassword(),
+                        'role' => $schema['owner'],
+                        'warehouse' => $warehousesGrant[0]['name'],
+                        'database' => $database,
+                        'schema' => $schema['name'],
+                        'table' => $table['name'],
+                        'extraColumns' => implode(',', $columns),
+                        'primaryKeys' => implode(',', $primaryKeys),
+                    ];
+
+                    array_walk($arguments, function (&$value, $key): void {
+                        $value = sprintf('--%s "%s"', $key, $value);
+                    });
+
+                    $process = Process::fromShellCommandline(
+                        'python3 ' . __DIR__ . '/dataDiff.py ' . implode(' ', $arguments)
+                    );
+                    $process->setTimeout(null);
+                    $process->run();
+                    if (!$process->isSuccessful()) {
+                        $this->logger->warning(sprintf(
+                            'Checking table "%s.%s.%s" ends with error: "%s"',
+                            $database,
+                            $schema['name'],
+                            $table['name'],
+                            $process->getOutput()
+                        ));
+                    } else {
+                        $this->logger->info(sprintf(
+                            'Checking table "%s.%s.%s" ends successfully. %s',
+                            $database,
+                            $schema['name'],
+                            $table['name'],
+                            $process->getOutput()
+                        ));
+                    }
+                }
             }
         }
     }
