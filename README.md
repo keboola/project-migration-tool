@@ -1,6 +1,6 @@
 # Project migration with snowflake backend
 
-> Fill in description
+> This application is used for transferring the Keboola Connection project at the database level. It transfers all tables, their permissions and database users.
 
 # Configuration
 
@@ -10,6 +10,7 @@ Following queries will create users with required permissions:
 
 ## On Source Snowflake account
 
+### If you migrate to the same region
 ```sql
 CREATE ROLE SOURCE_MAIN_MIGRATE;
 CREATE USER "MIGRATE" PASSWORD='MIGRATE_PASSWORD' DEFAULT_ROLE='SOURCE_MAIN_MIGRATE';
@@ -18,6 +19,20 @@ GRANT MANAGE GRANTS ON ACCOUNT TO ROLE SOURCE_MAIN_MIGRATE;
 GRANT CREATE SHARE ON ACCOUNT TO ROLE SOURCE_MAIN_MIGRATE;
 GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE SOURCE_MAIN_MIGRATE;
 GRANT USAGE ON WAREHOUSE MIGRATE TO ROLE SOURCE_MAIN_MIGRATE;
+```
+
+### If you migrate to a different region
+
+```sql
+CREATE USER "MIGRATE" PASSWORD='MIGRATE_PASSWORD' DEFAULT_ROLE='SOURCE_MAIN_MIGRATE';
+GRANT ROLE "ACCOUNTADMIN" TO USER "MIGRATE";
+```
+
+## On Migrate Snowflake account (only if you migrate to a different region)
+    
+```sql
+CREATE USER "MIGRATE" PASSWORD='MIGRATE_PASSWORD' DEFAULT_ROLE='SOURCE_MAIN_MIGRATE';
+GRANT ROLE "ACCOUNTADMIN" TO USER "MIGRATE";
 ```
 
 ## On Target Snowflake account
