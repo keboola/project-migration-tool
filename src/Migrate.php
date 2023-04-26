@@ -176,6 +176,9 @@ class Migrate
         if ($this->sourceConnection->getRegion() === $this->destinationConnection->getRegion()) {
             return;
         }
+        if (!$this->migrateConnection) {
+            throw new UserException('Migration connection is not set');
+        }
         foreach ($this->databases as $database) {
             //            Allow replication on source database
             $this->sourceConnection->query(sprintf(
@@ -233,6 +236,9 @@ SQL;
 
         $connection = $this->sourceConnection;
         if ($sourceRegion !== $destinationRegion) {
+            if (!$this->migrateConnection) {
+                throw new UserException('Migration connection is not set');
+            }
             $connection = $this->migrateConnection;
         }
 
@@ -275,6 +281,14 @@ SQL;
         $sourceRegion = $this->sourceConnection->getRegion();
         $destinationRegion = $this->destinationConnection->getRegion();
 
+        $connection = $this->sourceConnection;
+        if ($sourceRegion !== $destinationRegion) {
+            if (!$this->migrateConnection) {
+                throw new UserException('Migration connection is not set');
+            }
+            $connection = $this->migrateConnection;
+        }
+
         foreach ($this->databases as $database) {
             $shareDbName = $database . '_SHARE';
 
@@ -286,9 +300,7 @@ SQL;
             $this->destinationConnection->query(sprintf(
                 'CREATE DATABASE %s FROM SHARE IDENTIFIER(\'%s.%s\');',
                 Helper::quoteIdentifier($shareDbName),
-                $sourceRegion !== $destinationRegion ?
-                    $this->migrateConnection->getAccount() :
-                    $this->sourceConnection->getAccount(),
+                $connection->getAccount(),
                 self::MIGRATION_SHARE_PREFIX . $database
             ));
         }
@@ -968,7 +980,10 @@ SQL;
                 $this->sourceConnection->useRole($mainRoleWithGrants['name']);
                 $this->destinationConnection->useRole($mainRoleWithGrants['name']);
                 $this->sourceConnection->grantRoleToUser($this->config->getSourceSnowflakeUser(), $schema['owner']);
-                $this->destinationConnection->grantRoleToUser($this->config->getTargetSnowflakeUser(), $schema['owner']);
+                $this->destinationConnection->grantRoleToUser(
+                    $this->config->getTargetSnowflakeUser(),
+                    $schema['owner']
+                );
                 $this->sourceConnection->useRole($schema['owner']);
 
                 $tables = $this->sourceConnection->fetchAll(sprintf(
