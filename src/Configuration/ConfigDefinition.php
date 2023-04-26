@@ -17,6 +17,10 @@ class ConfigDefinition extends BaseConfigDefinition
         /** @noinspection NullPointerExceptionInspection */
         $parametersNode
             ->children()
+                ->enumNode('action')
+                    ->values([Config::ACTION_RUN, Config::ACTION_CHECK])
+                    ->defaultValue(Config::ACTION_RUN)
+                ->end()
                 ->arrayNode('credentials')
                     ->children()
                         ->arrayNode('source')

@@ -8,6 +8,15 @@ use Keboola\Component\Config\BaseConfig;
 
 class Config extends BaseConfig
 {
+    public const ACTION_RUN = 'run';
+
+    public const ACTION_CHECK = 'runCheckMigratedData';
+
+    public function getRunAction(): string
+    {
+        return $this->getStringValue(['parameters', 'action'], 'run');
+    }
+
     public function getDatabases(): array
     {
         return $this->getArrayValue(['parameters', 'migrateDatabases']);

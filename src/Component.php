@@ -16,33 +16,47 @@ class Component extends BaseComponent
     {
         $migrate = MigrateFactory::create($this->getLogger(), $this->getConfig());
 
-//        Get main role
+        switch ($this->getConfig()->getRunAction()) {
+            case Config::ACTION_RUN:
+                $this->runMigrateData($migrate);
+                break;
+            case self::ACTION_CHECK_MIGRATED_DATA:
+                $this->runCheckMigratedData($migrate);
+                break;
+            default:
+                throw new \Exception(sprintf('Action "%s" is not supported.', $this->getConfig()->getAction()));
+        }
+    }
+
+    private function runMigrateData(Migrate $migrate): void
+    {
+        //        Get main role
         $this->getLogger()->info('Getting main role with grants');
         $mainRoleWithGrants = $migrate->getMainRoleWithGrants();
 
-//        Cleanup destination account
+        //        Cleanup destination account
         if ($this->getConfig()->getSynchronizeRun()) {
             $this->getLogger()->info('Pre-migration cleanup.');
             $migrate->cleanupAccount($mainRoleWithGrants['name'], $this->getConfig()->getSynchronizeDryRun());
         }
 
-//        Create DB replication
+        //        Create DB replication
         $this->getLogger()->info('Creating replication.');
         $migrate->createReplication();
 
-//        Create DB sharing
+        //        Create DB sharing
         $this->getLogger()->info('Creating DB sharing.');
         $migrate->createShare();
 
-//        Export grants from source database
+        //        Export grants from source database
         $this->getLogger()->info('Exporting grants of roles.');
         $rolesGrants = $migrate->exportRolesGrants();
 
-//        Create MainRole in target snflk account
+        //        Create MainRole in target snflk account
         $this->getLogger()->info('Creating main role in target account.');
         $migrate->createMainRole($mainRoleWithGrants, $this->getConfig()->getPasswordOfUsers());
 
-//        create and clone databases from shares
+        //        create and clone databases from shares
         $this->getLogger()->info('Creating shares databases.');
         $migrate->createDatabasesFromShares();
 
@@ -60,10 +74,8 @@ class Component extends BaseComponent
         $migrate->printUnusedGrants($rolesGrants);
     }
 
-    protected function runCheckMigratedData(): void
+    private function runCheckMigratedData(Migrate $migrate): void
     {
-        $migrate = MigrateFactory::create($this->getLogger(), $this->getConfig());
-
         $this->getLogger()->info('Getting main role with grants');
         $mainRoleWithGrants = $migrate->getMainRoleWithGrants();
 
@@ -76,22 +88,6 @@ class Component extends BaseComponent
         /** @var Config $config */
         $config = parent::getConfig();
         return $config;
-    }
-
-    public function execute(): void
-    {
-        $action = $this->getConfig()->getAction();
-        if (!$this->isSyncAction()) {
-            $this->$action();
-            return;
-        }
-
-        parent::execute();
-    }
-
-    public function isSyncAction(): bool
-    {
-        return !in_array($this->getConfig()->getAction(), ['run', self::ACTION_CHECK_MIGRATED_DATA]);
     }
 
     protected function getConfigClass(): string
