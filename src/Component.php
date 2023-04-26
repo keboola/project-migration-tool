@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ProjectMigrationTool;
 
+use Exception;
 use Keboola\Component\BaseComponent;
 use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Configuration\ConfigDefinition;
@@ -24,7 +25,7 @@ class Component extends BaseComponent
                 $this->runCheckMigratedData($migrate);
                 break;
             default:
-                throw new \Exception(sprintf('Action "%s" is not supported.', $this->getConfig()->getAction()));
+                throw new Exception(sprintf('Action "%s" is not supported.', $this->getConfig()->getAction()));
         }
     }
 
