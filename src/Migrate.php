@@ -967,6 +967,11 @@ SQL;
             fn($v) => $v['granted_on'] === 'WAREHOUSE' && $v['privilege'] === 'USAGE'
         ));
         assert(count($warehousesGrant) > 0);
+        $this->sourceConnection->grantRoleToUser($this->config->getSourceSnowflakeUser(), $mainRoleWithGrants['name']);
+        $this->destinationConnection->grantRoleToUser(
+            $this->config->getTargetSnowflakeUser(),
+            $mainRoleWithGrants['name']
+        );
 
         foreach ($this->config->getDatabases() as $database) {
             $schemas = $this->sourceConnection->fetchAll(sprintf(
