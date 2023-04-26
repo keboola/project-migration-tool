@@ -24,7 +24,7 @@ class Config extends BaseConfig
 
     public function getPasswordOfUsers(): array
     {
-        return $this->getArrayValue(['parameters', 'passwordOfUsers']);
+        return $this->getArrayValue(['parameters', 'passwordOfUsers'], []);
     }
 
     public function getSynchronizeRun(): bool

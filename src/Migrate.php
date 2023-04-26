@@ -1217,7 +1217,7 @@ SQL;
 
         $this->sourceConnection->useRole($this->mainMigrationRoleSourceAccount);
         $describeUser = $this->sourceConnection->fetchAll(sprintf(
-            'SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.USERS WHERE NAME = %s;',
+            'SHOW USERS LIKE %s',
             QueryBuilder::quote($userGrant['name'])
         ));
         assert(count($describeUser) === 1);
