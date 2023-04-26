@@ -21,13 +21,18 @@ class MigrateFactory
             $config->getSourceSnowflakeWarehouse(),
             $config->getSourceSnowflakeRole()
         );
-        $migrateSnflkConnection = ConnectionFactory::create(
-            $config->getMigrationSnowflakeHost(),
-            $config->getMigrationSnowflakeUser(),
-            $config->getMigrationSnowflakePassword(),
-            $config->getMigrationSnowflakeWarehouse(),
-            $config->getMigrationSnowflakeRole()
-        );
+        $sourceSnflkConnection->useRole($config->getSourceSnowflakeRole());
+
+        if ($config->hasMigrateAccount()) {
+            $migrateSnflkConnection = ConnectionFactory::create(
+                $config->getMigrationSnowflakeHost(),
+                $config->getMigrationSnowflakeUser(),
+                $config->getMigrationSnowflakePassword(),
+                $config->getMigrationSnowflakeWarehouse(),
+                $config->getMigrationSnowflakeRole()
+            );
+            $migrateSnflkConnection->useRole($config->getMigrationSnowflakeRole());
+        }
         $destinationSnflkConnection = ConnectionFactory::create(
             $config->getTargetSnowflakeHost(),
             $config->getTargetSnowflakeUser(),
@@ -35,16 +40,13 @@ class MigrateFactory
             $config->getTargetSnowflakeWarehouse(),
             $config->getTargetSnowflakeRole()
         );
-
-        //        Switch to main migration role (e.g. ACCOUNTADMIN)
-        $sourceSnflkConnection->useRole($config->getSourceSnowflakeRole());
-        $migrateSnflkConnection->useRole($config->getMigrationSnowflakeRole());
         $destinationSnflkConnection->useRole($config->getTargetSnowflakeRole());
 
         return new Migrate(
             $logger,
+            $config,
             $sourceSnflkConnection,
-            $migrateSnflkConnection,
+            $migrateSnflkConnection ?? null,
             $destinationSnflkConnection,
             $config->getDatabases(),
             $config->getSourceSnowflakeRole(),

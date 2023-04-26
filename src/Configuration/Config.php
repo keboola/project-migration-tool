@@ -30,6 +30,11 @@ class Config extends BaseConfig
         return $value;
     }
 
+    public function hasMigrateAccount(): bool
+    {
+        return is_array($this->getValue(['parameters', 'credentials', 'migration'], false));
+    }
+
     public function getSourceSnowflakeHost(): string
     {
         return $this->getStringValue(['parameters', 'credentials', 'source', 'host']);

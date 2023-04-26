@@ -17,9 +17,11 @@ class Migrate
 {
     private LoggerInterface $logger;
 
+    private Config $config;
+
     private Connection $sourceConnection;
 
-    private Connection $migrateConnection;
+    private ?Connection $migrateConnection;
 
     private Connection $destinationConnection;
 
@@ -40,14 +42,16 @@ class Migrate
 
     public function __construct(
         LoggerInterface $logger,
+        Config $config,
         Connection $sourceConnection,
-        Connection $migrateConnection,
+        ?Connection $migrateConnection,
         Connection $destinationConnection,
         array $databases,
         string $mainMigrationRoleSourceAccount,
         string $mainMigrationRoleTargetAccount
     ) {
         $this->logger = $logger;
+        $this->config = $config;
         $this->sourceConnection = $sourceConnection;
         $this->migrateConnection = $migrateConnection;
         $this->destinationConnection = $destinationConnection;
@@ -78,7 +82,7 @@ class Migrate
                     $sqls[] = sprintf(
                         'GRANT ROLE %s TO USER %s;',
                         Helper::quoteIdentifier($currentRole),
-                        Helper::quoteIdentifier((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'))
+                        Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
                     );
                     $sqls[] = sprintf('USE ROLE %s;', Helper::quoteIdentifier($currentRole));
                 }
@@ -97,7 +101,7 @@ class Migrate
                 $this->destinationConnection->query(sprintf(
                     'GRANT ROLE %s TO USER %s;',
                     Helper::quoteIdentifier($currentRole),
-                    Helper::quoteIdentifier((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'))
+                    Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
                 ));
                 $this->destinationConnection->useRole($role['granted_by']);
                 $futureGrants = $this->destinationConnection->fetchAll(sprintf(
@@ -127,7 +131,7 @@ class Migrate
                 $sqls[] = sprintf(
                     'GRANT ROLE %s TO USER %s;',
                     Helper::quoteIdentifier($currentRole),
-                    Helper::quoteIdentifier((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'))
+                    Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
                 );
                 $sqls[] = sprintf('USE ROLE %s;', Helper::quoteIdentifier($currentRole));
             }
@@ -290,7 +294,7 @@ SQL;
         }
     }
 
-    public function migrateUsersRolesAndGrants(Config $config, string $mainRole, array $grants): void
+    public function migrateUsersRolesAndGrants(string $mainRole, array $grants): void
     {
         $this->logger->info('Migrating users and roles.');
         // first step - migrate users and roles (without grants)
@@ -308,7 +312,7 @@ SQL;
                 'name' => $databaseRole,
                 'granted_by' => $mainRole,
                 'privilege' => 'OWNERSHIP',
-            ]);
+            ], $this->config->getTargetSnowflakeUser());
 
             foreach ($accountGrants as $grant) {
                 $this->destinationConnection->assignGrantToRole($grant);
@@ -316,15 +320,15 @@ SQL;
 
             foreach ($rolesGrants as $rolesGrant) {
                 if ($rolesGrant['privilege'] === 'OWNERSHIP') {
-                    $this->destinationConnection->createRole($rolesGrant);
-                    if ($config->getSynchronizeRun()) {
+                    $this->destinationConnection->createRole($rolesGrant, $this->config->getTargetSnowflakeUser());
+                    if ($this->config->getSynchronizeRun()) {
                         $this->grantsPrivilegesToOldDatabase($database, $rolesGrant['name'], $mainRole);
                     }
                 }
             }
 
             foreach ($userGrants as $userGrant) {
-                $this->createUser($userGrant, $config->getPasswordOfUsers());
+                $this->createUser($userGrant, $this->config->getPasswordOfUsers());
             }
         }
 
@@ -333,7 +337,7 @@ SQL;
         foreach ($this->databases as $database) {
             $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
 
-            if ($config->getSynchronizeRun()) {
+            if ($this->config->getSynchronizeRun()) {
                 $this->grantsPrivilegesToOldDatabase($database, $databaseRole, $mainRole);
             }
 
@@ -608,7 +612,10 @@ SQL;
     {
         $user = $mainRole = $mainRoleWithGrants['name'];
 
-        $this->destinationConnection->createRole(['name' => $mainRole, 'privilege' => 'OWNERSHIP']);
+        $this->destinationConnection->createRole(
+            ['name' => $mainRole, 'privilege' => 'OWNERSHIP'],
+            $this->config->getTargetSnowflakeUser()
+        );
 
         $mainRoleGrants = [
             'GRANT CREATE DATABASE ON ACCOUNT TO ROLE %s;',
@@ -766,7 +773,7 @@ SQL;
 
             $userRoles = $this->destinationConnection->fetchAll(sprintf(
                 'SHOW GRANTS TO USER %s',
-                Helper::quoteIdentifier((string) getenv('SNOWFLAKE_DESTINATION_ACCOUNT_USERNAME'))
+                Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
             ));
 
             foreach (array_reverse($userRoles) as $userRole) {
@@ -920,7 +927,7 @@ SQL;
         }
     }
 
-    public function postMigrationCheckData(Config $config, array $mainRoleWithGrants): void
+    public function postMigrationCheckData(array $mainRoleWithGrants): void
     {
         $sourceRegion = $this->sourceConnection->fetchAll(sprintf(
             'SHOW regions LIKE %s',
@@ -949,7 +956,7 @@ SQL;
         ));
         assert(count($warehousesGrant) > 0);
 
-        foreach ($config->getDatabases() as $database) {
+        foreach ($this->config->getDatabases() as $database) {
             $schemas = $this->sourceConnection->fetchAll(sprintf(
                 'SHOW SCHEMAS IN DATABASE %s',
                 Helper::quoteIdentifier($database)
@@ -960,8 +967,8 @@ SQL;
                 }
                 $this->sourceConnection->useRole($mainRoleWithGrants['name']);
                 $this->destinationConnection->useRole($mainRoleWithGrants['name']);
-                $this->sourceConnection->grantRoleToUser($config->getSourceSnowflakeUser(), $schema['owner']);
-                $this->destinationConnection->grantRoleToUser($config->getTargetSnowflakeUser(), $schema['owner']);
+                $this->sourceConnection->grantRoleToUser($this->config->getSourceSnowflakeUser(), $schema['owner']);
+                $this->destinationConnection->grantRoleToUser($this->config->getTargetSnowflakeUser(), $schema['owner']);
                 $this->sourceConnection->useRole($schema['owner']);
 
                 $tables = $this->sourceConnection->fetchAll(sprintf(
@@ -999,11 +1006,11 @@ SQL;
 
                     $arguments = [
                         'sourceAccount' => $sourceAccount,
-                        'sourceUser' => $config->getSourceSnowflakeUser(),
-                        'sourcePassword' => $config->getSourceSnowflakePassword(),
+                        'sourceUser' => $this->config->getSourceSnowflakeUser(),
+                        'sourcePassword' => $this->config->getSourceSnowflakePassword(),
                         'targetAccount' => $targetAccount,
-                        'targetUser' => $config->getTargetSnowflakeUser(),
-                        'targetPassword' => $config->getTargetSnowflakePassword(),
+                        'targetUser' => $this->config->getTargetSnowflakeUser(),
+                        'targetPassword' => $this->config->getTargetSnowflakePassword(),
                         'role' => $schema['owner'],
                         'warehouse' => $warehousesGrant[0]['name'],
                         'database' => $database,

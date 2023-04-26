@@ -47,7 +47,7 @@ class Component extends BaseComponent
         $migrate->createDatabasesFromShares();
 
         $this->getLogger()->info('Migrating warehouses/users/roles with grants');
-        $migrate->migrateUsersRolesAndGrants($this->getConfig(), $mainRoleWithGrants['name'], $rolesGrants);
+        $migrate->migrateUsersRolesAndGrants($mainRoleWithGrants['name'], $rolesGrants);
 
         $migrate->grantRoleToUsers();
 
@@ -68,7 +68,7 @@ class Component extends BaseComponent
         $mainRoleWithGrants = $migrate->getMainRoleWithGrants();
 
         $migrate->postMigrationCheckStructure($mainRoleWithGrants);
-        $migrate->postMigrationCheckData($this->getConfig(), $mainRoleWithGrants);
+        $migrate->postMigrationCheckData($mainRoleWithGrants);
     }
 
     public function getConfig(): Config
