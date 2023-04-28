@@ -75,8 +75,10 @@ class Component extends BaseComponent
         $migrate->printUnusedGrants($rolesGrants);
     }
 
-    private function runCheckMigratedData(Migrate $migrate): void
+    public function runCheckMigratedData(): void
     {
+        $migrate = MigrateFactory::create($this->getLogger(), $this->getConfig());
+
         $this->getLogger()->info('Getting main role with grants');
         $mainRoleWithGrants = $migrate->getMainRoleWithGrants();
 
@@ -99,5 +101,10 @@ class Component extends BaseComponent
     protected function getConfigDefinitionClass(): string
     {
         return ConfigDefinition::class;
+    }
+
+    protected function getSyncActions(): array
+    {
+        return [self::ACTION_CHECK_MIGRATED_DATA => 'runCheckMigratedData'];
     }
 }
