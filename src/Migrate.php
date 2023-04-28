@@ -64,6 +64,7 @@ class Migrate
     {
         $sqls = [];
         $currentRole = $this->mainMigrationRoleTargetAccount;
+        $this->destinationConnection->grantRoleToUser($this->config->getTargetSnowflakeUser(), $mainRoleName);
         foreach ($this->databases as $database) {
             $dbExists = $this->destinationConnection->fetchAll(sprintf(
                 'SHOW DATABASES LIKE %s;',
@@ -125,7 +126,7 @@ class Migrate
                 fn($v) => strtoupper($v['grantee_name']) === strtoupper($databaseRole)
             );
             assert(count($filteredGrantsOfRole) === 1);
-            $grantOfRole = current($grantsOfRole);
+            $grantOfRole = current($filteredGrantsOfRole);
             if ($grantOfRole['granted_by'] !== $currentRole) {
                 $currentRole = $grantOfRole['granted_by'];
                 $sqls[] = sprintf(
@@ -649,11 +650,6 @@ SQL;
             $password = $users[$user];
         } else {
             $password = Helper::generateRandomString();
-            $this->logger->alert(sprintf(
-                'User "%s" has been created with password "%s". Please change it immediately!',
-                $user,
-                $password
-            ));
         }
 
         $this->destinationConnection->query(sprintf(
@@ -1256,11 +1252,6 @@ SQL;
             $password = $passwordOfUsers[$userGrant['name']];
         } else {
             $password = Helper::generateRandomString();
-            $this->logger->alert(sprintf(
-                'User "%s" has been created with password "%s". Please change it immediately!',
-                $userGrant['name'],
-                $password
-            ));
         }
 
         $describeUser['password'] = sprintf(
