@@ -111,7 +111,7 @@ class Migrate
                 ));
                 foreach ($futureGrants as $futureGrant) {
                     $sqls[] = sprintf(
-                        'REVOKE %s ON FUTURE TABLES IN SCHEMA %s FROM ROLE %s',
+                        'REVOKE %s ON FUTURE TABLES IN SCHEMA %s FROM ROLE %s;',
                         $futureGrant['privilege'],
                         Helper::removeStringFromEnd($futureGrant['name'], '.<TABLE>'),
                         Helper::quoteIdentifier($futureGrant['grantee_name']),
