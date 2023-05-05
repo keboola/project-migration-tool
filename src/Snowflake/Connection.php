@@ -90,7 +90,7 @@ class Connection extends AdapterConnection
         return $role[0]['role'];
     }
 
-    public function createRole(array $role, string $user): void
+    public function createRole(array $role, string $userToGrantRoleTo): void
     {
         assert($role['privilege'] === 'OWNERSHIP');
 
@@ -100,7 +100,7 @@ class Connection extends AdapterConnection
 
         $this->query(sprintf('CREATE ROLE IF NOT EXISTS %s', Helper::quoteIdentifier($role['name'])));
 
-        $this->grantRoleToUser($user, $role['name']);
+        $this->grantRoleToUser($userToGrantRoleTo, $role['name']);
     }
 
     public function grantRoleToUser(string $user, string $role): void
