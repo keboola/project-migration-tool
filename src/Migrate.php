@@ -1113,7 +1113,7 @@ SQL;
 
         if (count($sourceData) !== count($targetData)) {
             $this->logger->alert(sprintf(
-                '%s: Source data count (%s) not equils target data count (%s)',
+                '%s: Source data count (%s) does not equal target data count (%s)',
                 $group,
                 count($sourceData),
                 count($targetData)
