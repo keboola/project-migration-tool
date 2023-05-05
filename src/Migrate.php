@@ -642,7 +642,7 @@ SQL;
 
         $warehouses = array_filter($mainRoleWithGrants['assignedGrants'], fn($v) => $v['granted_on'] === 'WAREHOUSE');
         foreach ($warehouses as $warehouse) {
-            $warehouseSize = self::createWarehouse($warehouse);
+            $this->createWarehouse($warehouse);
             $this->destinationConnection->assignGrantToRole($warehouse);
         }
 
