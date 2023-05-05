@@ -420,7 +420,7 @@ SQL;
                 $this->destinationConnection->assignGrantToRole($databaseGrant);
             }
 
-            self::assignSharePrivilegesToRole($database, $databaseRole);
+            $this->assignSharePrivilegesToRole($database, $databaseRole);
 
             $this->destinationConnection->useRole($databaseRole);
 
