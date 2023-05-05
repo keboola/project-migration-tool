@@ -621,7 +621,7 @@ SQL;
         return $tmp;
     }
 
-    public function createMainRole(array $mainRoleWithGrants, array $users): void
+    public function createMainRole(array $mainRoleWithGrants, array $userPasswords): void
     {
         $user = $mainRole = $mainRoleWithGrants['name'];
 
@@ -646,8 +646,8 @@ SQL;
             $this->destinationConnection->assignGrantToRole($warehouse);
         }
 
-        if (isset($users[$user])) {
-            $password = $users[$user];
+        if (isset($userPasswords[$user])) {
+            $password = $userPasswords[$user];
         } else {
             $password = Helper::generateRandomString();
         }
@@ -689,7 +689,7 @@ SQL;
         $this->sourceConnection->query(sprintf('USE WAREHOUSE %s', current($sourceGrants)['name']));
 
         foreach ($projectUsers as $projectUser) {
-            $this->createUser($projectUser, $users);
+            $this->createUser($projectUser, $userPasswords);
             $this->destinationConnection->assignGrantToRole($projectUser);
         }
 
