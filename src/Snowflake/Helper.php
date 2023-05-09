@@ -110,7 +110,7 @@ class Helper
 
     public static function quoteIdentifier(string $str): string
     {
-        if (preg_match('/^".+"$/', preg_quote($str, '/'))) {
+        if (preg_match('/^".+"$/', $str)) {
             return $str;
         }
         return QueryBuilder::quoteIdentifier($str);
