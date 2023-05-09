@@ -38,7 +38,10 @@ class Component extends BaseComponent
         //        Cleanup destination account
         if ($this->getConfig()->getSynchronizeRun()) {
             $this->getLogger()->info('Pre-migration cleanup.');
-            $migrate->cleanupAccount($mainRoleWithGrants['name'], $this->getConfig()->getSynchronizeDryRun());
+            $migrate->cleanupAccount(
+                $mainRoleWithGrants['name'],
+                $this->getConfig()->getSynchronizeDryPremigrationCleanupRun()
+            );
         }
 
         //        Create DB replication

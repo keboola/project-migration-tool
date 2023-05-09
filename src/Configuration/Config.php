@@ -32,10 +32,10 @@ class Config extends BaseConfig
         return is_array($this->getValue(['parameters', 'synchronize'], false));
     }
 
-    public function getSynchronizeDryRun(): bool
+    public function getSynchronizeDryPremigrationCleanupRun(): bool
     {
         /** @var bool $value */
-        $value = $this->getValue(['parameters', 'synchronize', 'dryRun']);
+        $value = $this->getValue(['parameters', 'synchronize', 'dryPremigrationCleanupRun']);
         return $value;
     }
 

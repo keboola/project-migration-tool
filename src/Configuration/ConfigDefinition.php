@@ -57,7 +57,7 @@ class ConfigDefinition extends BaseConfigDefinition
                 ->end()
                 ->arrayNode('synchronize')
                     ->children()
-                        ->booleanNode('dryRun')->defaultTrue()->end()
+                        ->booleanNode('dryPremigrationCleanupRun')->defaultTrue()->end()
                     ->end()
                 ->end()
                 ->arrayNode('passwordOfUsers')
