@@ -537,7 +537,17 @@ SQL;
                     } else {
                         $this->logger->info(sprintf('Creating table "%s" from SHARE database', $tableName));
                         $this->destinationConnection->query(sprintf(
-                            'CREATE TABLE %s.%s.%s AS SELECT * FROM %s.%s.%s;',
+                            'CREATE TABLE %s.%s.%s LIKE %s.%s.%s;',
+                            Helper::quoteIdentifier($database),
+                            Helper::quoteIdentifier($schemaName),
+                            Helper::quoteIdentifier($tableName),
+                            Helper::quoteIdentifier($shareDbName),
+                            Helper::quoteIdentifier($schemaName),
+                            Helper::quoteIdentifier($tableName),
+                        ));
+
+                        $this->destinationConnection->query(sprintf(
+                            'INSERT INTO %s.%s.%s SELECT * FROM %s.%s.%s;',
                             Helper::quoteIdentifier($database),
                             Helper::quoteIdentifier($schemaName),
                             Helper::quoteIdentifier($tableName),
