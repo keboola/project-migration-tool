@@ -407,7 +407,7 @@ SQL;
             $this->destinationConnection->query(sprintf(
                 'CREATE DATABASE %s DATA_RETENTION_TIME_IN_DAYS=%s;',
                 Helper::quoteIdentifier($database),
-                '1'
+                $sourceDatabase['retention_time']
             ));
 
             foreach ($databaseGrants as $databaseGrant) {
@@ -451,7 +451,7 @@ SQL;
                     Helper::quoteIdentifier($database),
                     Helper::quoteIdentifier($schemaName),
                     in_array('MANAGED ACCESS', $schemaOptions) ? 'WITH MANAGED ACCESS' : '',
-                    '1'
+                    $schema['retention_time']
                 ));
 
                 foreach ($schemaGrants as $schemaGrant) {
