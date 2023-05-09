@@ -686,8 +686,6 @@ SQL;
         );
         assert(count($sourceGrants) > 0);
 
-        $this->sourceConnection->query(sprintf('USE WAREHOUSE %s', current($sourceGrants)['name']));
-
         foreach ($projectUsers as $projectUser) {
             $this->createUser($projectUser, $userPasswords);
             $this->destinationConnection->assignGrantToRole($projectUser);
