@@ -114,6 +114,11 @@ class Connection extends AdapterConnection
 
     public function assignGrantToRole(array $grant): void
     {
+        if ($grant['granted_on'] === 'SCHEMA' && $grant['privilege'] === 'CREATE BUDGET') {
+            // CREATE BUDGET is not supported in Snowflake
+            return;
+        }
+
         $this->useRole($grant['granted_by']);
 
         if ($grant['privilege'] === 'USAGE' && $grant['granted_on'] === 'WAREHOUSE') {
