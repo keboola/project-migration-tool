@@ -220,7 +220,7 @@ CREATE WAREHOUSE IF NOT EXISTS "migrate"
 SQL;
             $this->migrateConnection->query($sql);
 
-            $this->migrateConnection->query('USE WAREHOUSE "MIGRATE";');
+            $this->migrateConnection->query('USE WAREHOUSE "migrate";');
 
             //            Run replicate of data
             $this->migrateConnection->query(sprintf(
@@ -711,7 +711,9 @@ SQL;
 
     private function createWarehouse(array $warehouse): string
     {
+        $role = $this->sourceConnection->getCurrentRole();
         $this->destinationConnection->useRole($this->mainMigrationRoleTargetAccount);
+        $this->sourceConnection->useRole($this->mainMigrationRoleSourceAccount);
         $warehouseInfo = $this->sourceConnection->fetchAll(sprintf(
             'SHOW WAREHOUSES LIKE %s',
             QueryBuilder::quote($warehouse['name'])
@@ -740,6 +742,7 @@ SQL;
 
         $this->destinationConnection->query($sql);
 
+        $this->sourceConnection->useRole($role);
         return $warehouseInfo['size'];
     }
 
