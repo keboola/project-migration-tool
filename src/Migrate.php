@@ -558,7 +558,7 @@ SQL;
                                 Helper::quoteIdentifier($tableName),
                             ));
                         } catch (RuntimeException $e) {
-                            $this->logger->info(sprintf(
+                            $this->logger->warning(sprintf(
                                 'Skip creating table %s.%s.%s. Error: "%s".',
                                 Helper::quoteIdentifier($database),
                                 Helper::quoteIdentifier($schemaName),
