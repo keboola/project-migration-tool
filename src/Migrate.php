@@ -536,25 +536,36 @@ SQL;
                         ));
                     } else {
                         $this->logger->info(sprintf('Creating table "%s" from SHARE database', $tableName));
-                        $this->destinationConnection->query(sprintf(
-                            'CREATE TABLE %s.%s.%s LIKE %s.%s.%s;',
-                            Helper::quoteIdentifier($database),
-                            Helper::quoteIdentifier($schemaName),
-                            Helper::quoteIdentifier($tableName),
-                            Helper::quoteIdentifier($shareDbName),
-                            Helper::quoteIdentifier($schemaName),
-                            Helper::quoteIdentifier($tableName),
-                        ));
 
-                        $this->destinationConnection->query(sprintf(
-                            'INSERT INTO %s.%s.%s SELECT * FROM %s.%s.%s;',
-                            Helper::quoteIdentifier($database),
-                            Helper::quoteIdentifier($schemaName),
-                            Helper::quoteIdentifier($tableName),
-                            Helper::quoteIdentifier($shareDbName),
-                            Helper::quoteIdentifier($schemaName),
-                            Helper::quoteIdentifier($tableName),
-                        ));
+                        try {
+                            $this->destinationConnection->query(sprintf(
+                                'CREATE TABLE %s.%s.%s LIKE %s.%s.%s;',
+                                Helper::quoteIdentifier($database),
+                                Helper::quoteIdentifier($schemaName),
+                                Helper::quoteIdentifier($tableName),
+                                Helper::quoteIdentifier($shareDbName),
+                                Helper::quoteIdentifier($schemaName),
+                                Helper::quoteIdentifier($tableName),
+                            ));
+
+                            $this->destinationConnection->query(sprintf(
+                                'INSERT INTO %s.%s.%s SELECT * FROM %s.%s.%s;',
+                                Helper::quoteIdentifier($database),
+                                Helper::quoteIdentifier($schemaName),
+                                Helper::quoteIdentifier($tableName),
+                                Helper::quoteIdentifier($shareDbName),
+                                Helper::quoteIdentifier($schemaName),
+                                Helper::quoteIdentifier($tableName),
+                            ));
+                        } catch (RuntimeException $e) {
+                            $this->logger->info(sprintf(
+                                'Skip creating table %s.%s.%s. Error: "%s".',
+                                Helper::quoteIdentifier($database),
+                                Helper::quoteIdentifier($schemaName),
+                                Helper::quoteIdentifier($tableName),
+                                $e->getMessage()
+                            ));
+                        }
                     }
 
                     $tableGrants = array_filter($tableGrants, fn($v) => $v['privilege'] !== 'OWNERSHIP');
