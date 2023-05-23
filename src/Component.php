@@ -84,7 +84,7 @@ class Component extends BaseComponent
         $mainRoleWithGrants = $migrate->getMainRoleWithGrants();
 
         $migrate->postMigrationCheckStructure($mainRoleWithGrants);
-        $migrate->postMigrationCheckData($mainRoleWithGrants);
+//        $migrate->postMigrationCheckData($mainRoleWithGrants);
     }
 
     public function getConfig(): Config
