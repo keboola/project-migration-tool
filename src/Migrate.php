@@ -863,7 +863,7 @@ SQL;
                         'CONCAT(TABLE_SCHEMA, \'.\', TABLE_NAME) AS ID',
                         'TABLE_NAME',
                         'TABLE_SCHEMA',
-//                        'TABLE_OWNER',
+                        'TABLE_OWNER',
                         'TABLE_TYPE',
                         'ROW_COUNT',
                         // 'BYTES',
