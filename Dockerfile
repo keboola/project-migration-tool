@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         unixodbc \
         unixodbc-dev \
         libpq-dev \
+        gpg \
         debsig-verify \
         libicu-dev \
         gnupg \
