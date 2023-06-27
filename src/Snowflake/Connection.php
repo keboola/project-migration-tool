@@ -6,7 +6,8 @@ namespace ProjectMigrationTool\Snowflake;
 
 use Keboola\Component\UserException;
 use Keboola\SnowflakeDbAdapter\Connection as AdapterConnection;
-use Keboola\SnowflakeDbAdapter\QueryBuilder;
+use Psr\Log\LoggerInterface;
+use Throwable;
 
 class Connection extends AdapterConnection
 {
@@ -18,11 +19,14 @@ class Connection extends AdapterConnection
 
     private string $defaultRole;
 
+    private ?LoggerInterface $logger;
+
     private array $roleWarehouses = [];
 
-    public function __construct(array $options, string $defaultRole)
+    public function __construct(array $options, string $defaultRole, ?LoggerInterface $logger = null)
     {
         $this->defaultRole = $defaultRole;
+        $this->logger = $logger;
         parent::__construct($options);
     }
 
@@ -121,29 +125,38 @@ class Connection extends AdapterConnection
 
         $this->useRole($grant['granted_by']);
 
+        $isWarehouseGrant = false;
         if ($grant['privilege'] === 'USAGE' && $grant['granted_on'] === 'WAREHOUSE') {
             $this->roleWarehouses[$grant['grantee_name']][] = $grant['name'];
+            $isWarehouseGrant = true;
         }
 
-        if ($grant['privilege'] === 'USAGE' && $grant['granted_on'] === 'ROLE') {
-            $this->query(sprintf(
-                'GRANT %s %s TO %s %s %s',
-                $grant['granted_on'],
-                $grant['name'],
-                $grant['granted_to'],
-                Helper::quoteIdentifier($grant['grantee_name']),
-                $grant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
-            ));
-        } else {
-            $this->query(sprintf(
-                'GRANT %s ON %s %s TO %s %s %s',
-                $grant['privilege'],
-                $grant['granted_on'],
-                $grant['granted_on'] !== 'ACCOUNT' ? $grant['name'] : '',
-                $grant['granted_to'],
-                Helper::quoteIdentifier($grant['grantee_name']),
-                $grant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
-            ));
+        try {
+            if ($grant['privilege'] === 'USAGE' && $grant['granted_on'] === 'ROLE') {
+                $this->query(sprintf(
+                    'GRANT %s %s TO %s %s %s',
+                    $grant['granted_on'],
+                    $grant['name'],
+                    $grant['granted_to'],
+                    Helper::quoteIdentifier($grant['grantee_name']),
+                    $grant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
+                ));
+            } else {
+                $this->query(sprintf(
+                    'GRANT %s ON %s %s TO %s %s %s',
+                    $grant['privilege'],
+                    $grant['granted_on'],
+                    $grant['granted_on'] !== 'ACCOUNT' ? $grant['name'] : '',
+                    $grant['granted_to'],
+                    Helper::quoteIdentifier($grant['grantee_name']),
+                    $grant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
+                ));
+            }
+        } catch (Throwable $e) {
+            if (!$isWarehouseGrant || $this->logger === null) {
+                throw $e;
+            }
+            $this->logger->warning($e->getMessage());
         }
     }
 
