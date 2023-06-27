@@ -131,32 +131,38 @@ class Connection extends AdapterConnection
             $isWarehouseGrant = true;
         }
 
+        if ($grant['privilege'] === 'USAGE' && $grant['granted_on'] === 'ROLE') {
+            $query = sprintf(
+                'GRANT %s %s TO %s %s %s',
+                $grant['granted_on'],
+                $grant['name'],
+                $grant['granted_to'],
+                Helper::quoteIdentifier($grant['grantee_name']),
+                $grant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
+            );
+        } else {
+            $query = sprintf(
+                'GRANT %s ON %s %s TO %s %s %s',
+                $grant['privilege'],
+                $grant['granted_on'],
+                $grant['granted_on'] !== 'ACCOUNT' ? $grant['name'] : '',
+                $grant['granted_to'],
+                Helper::quoteIdentifier($grant['grantee_name']),
+                $grant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
+            );
+        }
+
         try {
-            if ($grant['privilege'] === 'USAGE' && $grant['granted_on'] === 'ROLE') {
-                $this->query(sprintf(
-                    'GRANT %s %s TO %s %s %s',
-                    $grant['granted_on'],
-                    $grant['name'],
-                    $grant['granted_to'],
-                    Helper::quoteIdentifier($grant['grantee_name']),
-                    $grant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
-                ));
-            } else {
-                $this->query(sprintf(
-                    'GRANT %s ON %s %s TO %s %s %s',
-                    $grant['privilege'],
-                    $grant['granted_on'],
-                    $grant['granted_on'] !== 'ACCOUNT' ? $grant['name'] : '',
-                    $grant['granted_to'],
-                    Helper::quoteIdentifier($grant['grantee_name']),
-                    $grant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
-                ));
-            }
+            $this->query($query);
         } catch (Throwable $e) {
             if (!$isWarehouseGrant || $this->logger === null) {
                 throw $e;
             }
-            $this->logger->warning($e->getMessage());
+            $this->logger->warning(sprintf(
+                'Failed query "%s" with role "%s"',
+                $query,
+                $grant['granted_by']
+            ));
         }
     }
 
