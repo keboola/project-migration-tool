@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace ProjectMigrationTool\Snowflake;
 
+use Psr\Log\LoggerInterface;
+
 class ConnectionFactory
 {
     public static function create(
@@ -11,7 +13,8 @@ class ConnectionFactory
         string $user,
         string $password,
         string $warehouse,
-        string $role
+        string $role,
+        ?LoggerInterface $logger = null
     ): Connection {
         $options = [
             'host' => $host,
@@ -20,6 +23,6 @@ class ConnectionFactory
             'warehouse' => $warehouse,
         ];
 
-        return new Connection($options, $role);
+        return new Connection($options, $role, $logger);
     }
 }

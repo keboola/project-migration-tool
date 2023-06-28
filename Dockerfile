@@ -1,9 +1,9 @@
-FROM php:8-cli
+FROM php:8-cli-buster
 
 ARG COMPOSER_FLAGS="--prefer-dist --no-interaction"
 ARG DEBIAN_FRONTEND=noninteractive
-ARG SNOWFLAKE_ODBC_VERSION=2.22.5
-ARG SNOWFLAKE_ODBC_GPG_KEY=37C7086698CB005C
+ARG SNOWFLAKE_ODBC_VERSION=2.25.6
+ARG SNOWFLAKE_ODBC_GPG_KEY=630D9F3CAB551AF3
 ENV COMPOSER_ALLOW_SUPERUSER 1
 ENV COMPOSER_PROCESS_TIMEOUT 3600
 
@@ -19,11 +19,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         unixodbc \
         unixodbc-dev \
         libpq-dev \
+        gpg \
         debsig-verify \
         libicu-dev \
         gnupg \
         python3 \
         python3-pip \
+        python3-setuptools \
 	&& rm -r /var/lib/apt/lists/* \
 	&& sed -i 's/^# *\(en_US.UTF-8\)/\1/' /etc/locale.gen \
 	&& locale-gen \
@@ -47,7 +49,6 @@ RUN set -x \
 #snoflake download + verify package
 COPY docker/drivers/snowflake-odbc-policy.pol /etc/debsig/policies/$SNOWFLAKE_ODBC_GPG_KEY/generic.pol
 COPY docker/drivers/simba.snowflake.ini /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
-ADD https://sfc-repo.azure.snowflakecomputing.com/odbc/linux/$SNOWFLAKE_ODBC_VERSION/snowflake-odbc-$SNOWFLAKE_ODBC_VERSION.x86_64.deb /tmp/snowflake-odbc.deb
 
 ENV LANGUAGE=en_US.UTF-8
 ENV LANG=en_US.UTF-8
@@ -58,17 +59,21 @@ RUN mkdir -p ~/.gnupg \
     && chmod 700 ~/.gnupg \
     && echo "disable-ipv6" >> ~/.gnupg/dirmngr.conf \
     && mkdir /usr/share/debsig/keyrings/$SNOWFLAKE_ODBC_GPG_KEY \
-    && if ! gpg --keyserver hkp://keys.gnupg.net --recv-keys $SNOWFLAKE_ODBC_GPG_KEY; then \
-            gpg --keyserver hkp://keyserver.ubuntu.com --recv-keys $SNOWFLAKE_ODBC_GPG_KEY;  \
-        fi \
-    && gpg --export $SNOWFLAKE_ODBC_GPG_KEY > /usr/share/debsig/keyrings/$SNOWFLAKE_ODBC_GPG_KEY/debsig.gpg \
-    && debsig-verify /tmp/snowflake-odbc.deb \
+    && if ! gpg --keyserver hkp://keyserver.ubuntu.com --recv-keys $SNOWFLAKE_ODBC_GPG_KEY; then \
+          gpg --keyserver hkp://keys.gnupg.net --recv-keys $SNOWFLAKE_ODBC_GPG_KEY; \
+      fi \
+    && gpg --export $SNOWFLAKE_ODBC_GPG_KEY > snowflakeKey.asc \
+    && touch /usr/share/debsig/keyrings/$SNOWFLAKE_ODBC_GPG_KEY/debsig.gpg \
+    && gpg --no-default-keyring --keyring /usr/share/debsig/keyrings/$SNOWFLAKE_ODBC_GPG_KEY/debsig.gpg --import snowflakeKey.asc \
+    && curl https://sfc-repo.snowflakecomputing.com/odbc/linux/$SNOWFLAKE_ODBC_VERSION/snowflake-odbc-$SNOWFLAKE_ODBC_VERSION.x86_64.deb --output /tmp/snowflake-odbc.deb \
+    && debsig-verify -v /tmp/snowflake-odbc.deb \
     && gpg --batch --delete-key --yes $SNOWFLAKE_ODBC_GPG_KEY \
     && dpkg -i /tmp/snowflake-odbc.deb
 
 # INstall data-diff
-RUN pip install data-diff
-RUN pip install 'data-diff[snowflake]'
+RUN python3 -m pip install --upgrade pip
+RUN pip3 install data-diff
+RUN pip3 install 'data-diff[snowflake]'
 
 ## Composer - deps always cached unless changed
 # First copy only composer files

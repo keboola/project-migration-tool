@@ -220,7 +220,7 @@ CREATE WAREHOUSE IF NOT EXISTS "migrate"
 SQL;
             $this->migrateConnection->query($sql);
 
-            $this->migrateConnection->query('USE WAREHOUSE "MIGRATE";');
+            $this->migrateConnection->query('USE WAREHOUSE "migrate";');
 
             //            Run replicate of data
             $this->migrateConnection->query(sprintf(
@@ -536,25 +536,36 @@ SQL;
                         ));
                     } else {
                         $this->logger->info(sprintf('Creating table "%s" from SHARE database', $tableName));
-                        $this->destinationConnection->query(sprintf(
-                            'CREATE TABLE %s.%s.%s LIKE %s.%s.%s;',
-                            Helper::quoteIdentifier($database),
-                            Helper::quoteIdentifier($schemaName),
-                            Helper::quoteIdentifier($tableName),
-                            Helper::quoteIdentifier($shareDbName),
-                            Helper::quoteIdentifier($schemaName),
-                            Helper::quoteIdentifier($tableName),
-                        ));
 
-                        $this->destinationConnection->query(sprintf(
-                            'INSERT INTO %s.%s.%s SELECT * FROM %s.%s.%s;',
-                            Helper::quoteIdentifier($database),
-                            Helper::quoteIdentifier($schemaName),
-                            Helper::quoteIdentifier($tableName),
-                            Helper::quoteIdentifier($shareDbName),
-                            Helper::quoteIdentifier($schemaName),
-                            Helper::quoteIdentifier($tableName),
-                        ));
+                        try {
+                            $this->destinationConnection->query(sprintf(
+                                'CREATE TABLE %s.%s.%s LIKE %s.%s.%s;',
+                                Helper::quoteIdentifier($database),
+                                Helper::quoteIdentifier($schemaName),
+                                Helper::quoteIdentifier($tableName),
+                                Helper::quoteIdentifier($shareDbName),
+                                Helper::quoteIdentifier($schemaName),
+                                Helper::quoteIdentifier($tableName),
+                            ));
+
+                            $this->destinationConnection->query(sprintf(
+                                'INSERT INTO %s.%s.%s SELECT * FROM %s.%s.%s;',
+                                Helper::quoteIdentifier($database),
+                                Helper::quoteIdentifier($schemaName),
+                                Helper::quoteIdentifier($tableName),
+                                Helper::quoteIdentifier($shareDbName),
+                                Helper::quoteIdentifier($schemaName),
+                                Helper::quoteIdentifier($tableName),
+                            ));
+                        } catch (RuntimeException $e) {
+                            $this->logger->warning(sprintf(
+                                'Skip creating table %s.%s.%s. Error: "%s".',
+                                Helper::quoteIdentifier($database),
+                                Helper::quoteIdentifier($schemaName),
+                                Helper::quoteIdentifier($tableName),
+                                $e->getMessage()
+                            ));
+                        }
                     }
 
                     $tableGrants = array_filter($tableGrants, fn($v) => $v['privilege'] !== 'OWNERSHIP');
@@ -711,7 +722,9 @@ SQL;
 
     private function createWarehouse(array $warehouse): string
     {
+        $role = $this->sourceConnection->getCurrentRole();
         $this->destinationConnection->useRole($this->mainMigrationRoleTargetAccount);
+        $this->sourceConnection->useRole($this->mainMigrationRoleSourceAccount);
         $warehouseInfo = $this->sourceConnection->fetchAll(sprintf(
             'SHOW WAREHOUSES LIKE %s',
             QueryBuilder::quote($warehouse['name'])
@@ -740,6 +753,7 @@ SQL;
 
         $this->destinationConnection->query($sql);
 
+        $this->sourceConnection->useRole($role);
         return $warehouseInfo['size'];
     }
 

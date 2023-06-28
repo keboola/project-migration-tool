@@ -19,7 +19,8 @@ class MigrateFactory
             $config->getSourceSnowflakeUser(),
             $config->getSourceSnowflakePassword(),
             $config->getSourceSnowflakeWarehouse(),
-            $config->getSourceSnowflakeRole()
+            $config->getSourceSnowflakeRole(),
+            $logger
         );
         $sourceSnflkConnection->useRole($config->getSourceSnowflakeRole());
 
@@ -29,7 +30,8 @@ class MigrateFactory
                 $config->getMigrationSnowflakeUser(),
                 $config->getMigrationSnowflakePassword(),
                 $config->getMigrationSnowflakeWarehouse(),
-                $config->getMigrationSnowflakeRole()
+                $config->getMigrationSnowflakeRole(),
+                $logger
             );
             $migrateSnflkConnection->useRole($config->getMigrationSnowflakeRole());
         }
@@ -38,7 +40,8 @@ class MigrateFactory
             $config->getTargetSnowflakeUser(),
             $config->getTargetSnowflakePassword(),
             $config->getTargetSnowflakeWarehouse(),
-            $config->getTargetSnowflakeRole()
+            $config->getTargetSnowflakeRole(),
+            $logger
         );
         $destinationSnflkConnection->useRole($config->getTargetSnowflakeRole());
 
