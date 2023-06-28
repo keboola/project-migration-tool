@@ -71,6 +71,7 @@ RUN mkdir -p ~/.gnupg \
     && dpkg -i /tmp/snowflake-odbc.deb
 
 # INstall data-diff
+RUN python3 -m pip install --upgrade pip
 RUN pip3 install data-diff
 RUN pip3 install 'data-diff[snowflake]'
 
