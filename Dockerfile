@@ -1,4 +1,4 @@
-FROM php:8-cli
+FROM php:8-cli-buster
 
 ARG COMPOSER_FLAGS="--prefer-dist --no-interaction"
 ARG DEBIAN_FRONTEND=noninteractive
@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gnupg \
         python3 \
         python3-pip \
+        python3-setuptools \
 	&& rm -r /var/lib/apt/lists/* \
 	&& sed -i 's/^# *\(en_US.UTF-8\)/\1/' /etc/locale.gen \
 	&& locale-gen \
@@ -70,8 +71,8 @@ RUN mkdir -p ~/.gnupg \
     && dpkg -i /tmp/snowflake-odbc.deb
 
 # INstall data-diff
-RUN pip install data-diff
-RUN pip install 'data-diff[snowflake]'
+RUN pip3 install data-diff
+RUN pip3 install 'data-diff[snowflake]'
 
 ## Composer - deps always cached unless changed
 # First copy only composer files
