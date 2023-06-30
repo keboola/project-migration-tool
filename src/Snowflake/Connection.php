@@ -6,6 +6,7 @@ namespace ProjectMigrationTool\Snowflake;
 
 use Keboola\Component\UserException;
 use Keboola\SnowflakeDbAdapter\Connection as AdapterConnection;
+use ProjectMigrationTool\Exception\NoWarehouseException;
 use Psr\Log\LoggerInterface;
 use Throwable;
 
@@ -56,7 +57,7 @@ class Connection extends AdapterConnection
     public function useWarehouse(string $role): void
     {
         if (empty($this->roleWarehouses[$role])) {
-            throw new UserException(sprintf(
+            throw new NoWarehouseException(sprintf(
                 'The role "%s" cannot use any warehouses',
                 $role
             ));
