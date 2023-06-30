@@ -548,7 +548,6 @@ SQL;
                         ));
                     }
 
-
                     if ($this->canCloneTable($database, $schemaName, $tableName)) {
                         $this->logger->info(sprintf('Cloning table "%s" from OLD database', $tableName));
                         $this->destinationConnection->query(sprintf(
