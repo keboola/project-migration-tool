@@ -538,6 +538,9 @@ SQL;
                     try {
                         $this->destinationConnection->useWarehouse($ownershipOnTable['granted_by']);
                     } catch (NoWarehouseException $exception) {
+                        if (!preg_match('/^(KEBOOLA|SAPI|sapi)_WORKSPACE_/', $ownershipOnTable['granted_by'])) {
+                            throw $exception;
+                        }
                         $this->logger->warn(sprintf(
                             'Skipping table: %s, because: %s',
                             $tableName,
