@@ -23,6 +23,8 @@ class Connection extends AdapterConnection
 
     private array $roleWarehouses = [];
 
+    private array $failedGrants = [];
+
     public function __construct(array $options, string $defaultRole, ?LoggerInterface $logger = null)
     {
         $this->defaultRole = $defaultRole;
@@ -158,9 +160,13 @@ class Connection extends AdapterConnection
             $this->query($query);
         } catch (Throwable $e) {
             if (!$isWarehouseGrant || $this->logger === null) {
-                throw $e;
+                if (in_array($grant['granted_on'], ['DATABASE', 'SCHEMA'])) {
+                    $this->failedGrants[] = $grant;
+                } else {
+                    throw $e;
+                }
             }
-            $this->logger->warning(sprintf(
+            $this->logger?->warning(sprintf(
                 'Failed query "%s" with role "%s"',
                 $query,
                 $grant['granted_by']
@@ -196,5 +202,10 @@ class Connection extends AdapterConnection
         assert(count($ownershipOnDatabase) === 1);
 
         return current($ownershipOnDatabase)['grantee_name'];
+    }
+
+    public function getFailedGrants(): array
+    {
+        return $this->failedGrants;
     }
 }
