@@ -6,6 +6,7 @@ namespace ProjectMigrationTool\Snowflake;
 
 use Keboola\Component\UserException;
 use Keboola\SnowflakeDbAdapter\Connection as AdapterConnection;
+use ProjectMigrationTool\Exception\NoWarehouseException;
 use Psr\Log\LoggerInterface;
 use Throwable;
 

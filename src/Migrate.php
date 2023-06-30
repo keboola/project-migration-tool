@@ -541,7 +541,7 @@ SQL;
                         if (!preg_match('/^(KEBOOLA|SAPI|sapi)_WORKSPACE_/', $ownershipOnTable['granted_by'])) {
                             throw $exception;
                         }
-                        $this->logger->warn(sprintf(
+                        $this->logger->warning(sprintf(
                             'Skipping table: %s, because: %s',
                             $tableName,
                             $exception->getMessage()
