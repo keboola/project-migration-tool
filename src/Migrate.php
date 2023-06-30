@@ -376,6 +376,19 @@ SQL;
         }
     }
 
+    public function reApplyFailedGrants(): void
+    {
+        $failedGrants = $this->destinationConnection->getFailedGrants();
+        if (count($failedGrants) === 0) {
+            $this->logger->info('There were no failed grants, nothing to apply');
+            return;
+        }
+        $this->logger->info('Attempting to apply ' . count($failedGrants) . ' failed grants');
+        foreach ($failedGrants as $grant) {
+            $this->destinationConnection->assignGrantToRole($grant);
+        }
+    }
+
     public function cloneDatabaseWithGrants(string $mainRole, array $grants): void
     {
         foreach ($this->databases as $database) {

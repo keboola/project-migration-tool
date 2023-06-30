@@ -72,6 +72,9 @@ class Component extends BaseComponent
         $this->getLogger()->info('Cloning databases with grants.');
         $migrate->cloneDatabaseWithGrants($mainRoleWithGrants['name'], $rolesGrants);
 
+        $this->getLogger()->info('Re-applying failed grants.');
+        $migrate->reApplyFailedGrants();
+
         $this->getLogger()->info('Post-migration cleanup.');
         $migrate->postMigrationCleanup();
 
