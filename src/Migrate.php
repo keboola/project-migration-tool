@@ -8,6 +8,7 @@ use Keboola\Component\UserException;
 use Keboola\SnowflakeDbAdapter\Exception\RuntimeException;
 use Keboola\SnowflakeDbAdapter\QueryBuilder;
 use ProjectMigrationTool\Configuration\Config;
+use ProjectMigrationTool\Exception\NoWarehouseException;
 use ProjectMigrationTool\Snowflake\Connection;
 use ProjectMigrationTool\Snowflake\Helper;
 use Psr\Log\LoggerInterface;
@@ -534,7 +535,16 @@ SQL;
                         $ownershipOnTable['granted_by']
                     );
                     $this->destinationConnection->useRole($ownershipOnTable['granted_by']);
-                    $this->destinationConnection->useWarehouse($ownershipOnTable['granted_by']);
+                    try {
+                        $this->destinationConnection->useWarehouse($ownershipOnTable['granted_by']);
+                    } catch (NoWarehouseException $exception) {
+                        $this->logger->warn(sprintf(
+                            'Skipping table: %s, because: %s',
+                            $tableName,
+                            $exception->getMessage()
+                        ));
+                    }
+
 
                     if ($this->canCloneTable($database, $schemaName, $tableName)) {
                         $this->logger->info(sprintf('Cloning table "%s" from OLD database', $tableName));

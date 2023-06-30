@@ -56,7 +56,7 @@ class Connection extends AdapterConnection
     public function useWarehouse(string $role): void
     {
         if (empty($this->roleWarehouses[$role])) {
-            throw new UserException(sprintf(
+            throw new NoWarehouseException(sprintf(
                 'The role "%s" cannot use any warehouses',
                 $role
             ));
