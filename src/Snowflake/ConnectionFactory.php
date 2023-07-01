@@ -21,8 +21,8 @@ class ConnectionFactory
             'user' => $user,
             'password' => $password,
             'warehouse' => $warehouse,
+            'clientSessionKeepAlive' => true,
         ];
-
         return new Connection($options, $role, $logger);
     }
 }
