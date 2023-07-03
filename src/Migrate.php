@@ -541,8 +541,8 @@ SQL;
                         if (!preg_match('/^(KEBOOLA|SAPI|sapi)_WORKSPACE_/', $ownershipOnTable['granted_by'])) {
                             throw $exception;
                         }
-                        $this->logger->warning(sprintf(
-                            'Skipping table: %s, because: %s',
+                        $this->logger->info(sprintf(
+                            'Warning: Skipping table: %s, because: %s',
                             $tableName,
                             $exception->getMessage()
                         ));
@@ -583,8 +583,8 @@ SQL;
                                 Helper::quoteIdentifier($tableName),
                             ));
                         } catch (RuntimeException $e) {
-                            $this->logger->warning(sprintf(
-                                'Skip creating table %s.%s.%s. Error: "%s".',
+                            $this->logger->info(sprintf(
+                                'Warning: Skip creating table %s.%s.%s. Error: "%s".',
                                 Helper::quoteIdentifier($database),
                                 Helper::quoteIdentifier($schemaName),
                                 Helper::quoteIdentifier($tableName),
@@ -847,8 +847,8 @@ SQL;
                         Helper::quoteIdentifier($userRole['grantee_name']),
                     ));
                 } catch (RuntimeException $e) {
-                    $this->logger->warning(sprintf(
-                        'Query failed, please check manually: %s',
+                    $this->logger->info(sprintf(
+                        'Warning: Query failed, please check manually: %s',
                         $e->getMessage()
                     ));
                 }
@@ -1047,8 +1047,8 @@ SQL;
                         Helper::quoteIdentifier($table['name'])
                     ));
                     if (!$primaryKeys) {
-                        $this->logger->warning(sprintf(
-                            'Table %s.%s.%s has no primary key. Skipping',
+                        $this->logger->info(sprintf(
+                            'Warning: Table %s.%s.%s has no primary key. Skipping',
                             $database,
                             $schema['name'],
                             $table['name']
@@ -1093,8 +1093,8 @@ SQL;
                     $process->setTimeout(null);
                     $process->run();
                     if (!$process->isSuccessful()) {
-                        $this->logger->warning(sprintf(
-                            'Checking table "%s.%s.%s" ends with error: "%s"',
+                        $this->logger->info(sprintf(
+                            'Warning: Checking table "%s.%s.%s" ends with error: "%s"',
                             $database,
                             $schema['name'],
                             $table['name'],

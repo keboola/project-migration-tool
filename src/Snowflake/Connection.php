@@ -167,8 +167,8 @@ class Connection extends AdapterConnection
                     throw $e;
                 }
             }
-            $this->logger?->warning(sprintf(
-                'Failed query "%s" with role "%s"',
+            $this->logger?->info(sprintf(
+                'Warning: Failed grant query "%s" with role "%s"',
                 $query,
                 $grant['granted_by']
             ));
