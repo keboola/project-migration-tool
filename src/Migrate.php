@@ -542,7 +542,7 @@ SQL;
                     }
 
                     if ($this->canCloneTable($mainRole, $database, $schemaName, $tableName)) {
-                        $this->grantUsageToOldDatabase(
+                        $this->grantUsageToOldTable(
                             $database,
                             $schemaName,
                             $tableName,
@@ -1408,7 +1408,7 @@ SQL;
         return $lastUpdateTableInOldDatabase[0]['maxTimestamp'] === $lastUpdateTableInShareDatabase[0]['maxTimestamp'];
     }
 
-    private function grantUsageToOldDatabase(
+    private function grantUsageToOldTable(
         string $database,
         string $schema,
         string $table,
