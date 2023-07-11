@@ -1385,14 +1385,17 @@ SQL;
         $sqlTemplate = 'SELECT max("_timestamp") as "maxTimestamp" FROM %s.%s.%s';
 
         $currentRole = $this->destinationConnection->getCurrentRole();
-        $this->destinationConnection->useRole($mainRole);
         try {
+            $this->destinationConnection->useRole($mainRole);
+
             $lastUpdateTableInOldDatabase = $this->destinationConnection->fetchAll(sprintf(
                 $sqlTemplate,
                 Helper::quoteIdentifier($database . '_OLD'),
                 Helper::quoteIdentifier($schema),
                 Helper::quoteIdentifier($table)
             ));
+
+            $this->destinationConnection->useRole($this->mainMigrationRoleTargetAccount);
             $lastUpdateTableInShareDatabase = $this->destinationConnection->fetchAll(sprintf(
                 $sqlTemplate,
                 Helper::quoteIdentifier($database . '_SHARE'),
@@ -1429,20 +1432,20 @@ SQL;
             sprintf(
                 'grant usage on database %s to role %s;',
                 Helper::quoteIdentifier($database . '_OLD'),
-                $role
+                Helper::quoteIdentifier($role)
             ),
             sprintf(
-                'grant usage on schema %s in database %s to role %s;',
-                Helper::quoteIdentifier($schema),
+                'grant usage on schema %s.%s to role %s;',
                 Helper::quoteIdentifier($database . '_OLD'),
-                $role
+                Helper::quoteIdentifier($schema),
+                Helper::quoteIdentifier($role)
             ),
             sprintf(
-                'grant usage on table %s in schema %s.%s to role %s;',
+                'grant select on table %s.%s.%s to role %s;',
+                Helper::quoteIdentifier($database . '_OLD'),
+                Helper::quoteIdentifier($schema),
                 Helper::quoteIdentifier($table),
-                Helper::quoteIdentifier($database . '_OLD'),
-                Helper::quoteIdentifier($schema),
-                $role
+                Helper::quoteIdentifier($role)
             ),
         ];
 
