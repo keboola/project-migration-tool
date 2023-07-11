@@ -335,9 +335,6 @@ SQL;
             foreach ($rolesGrants as $rolesGrant) {
                 if ($rolesGrant['privilege'] === 'OWNERSHIP') {
                     $this->destinationConnection->createRole($rolesGrant, $this->config->getTargetSnowflakeUser());
-                    if ($this->config->getSynchronizeRun()) {
-                        $this->grantsPrivilegesToOldDatabase($database, $rolesGrant['name'], $mainRole);
-                    }
                 }
             }
 
@@ -350,10 +347,6 @@ SQL;
         // second step - migrate all grants of roles/users/warehouses/account
         foreach ($this->databases as $database) {
             $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
-
-            if ($this->config->getSynchronizeRun()) {
-                $this->grantsPrivilegesToOldDatabase($database, $databaseRole, $mainRole);
-            }
 
             [
                 'grants' => [
@@ -548,7 +541,14 @@ SQL;
                         ));
                     }
 
-                    if ($this->canCloneTable($database, $schemaName, $tableName)) {
+                    if ($this->canCloneTable($mainRole, $database, $schemaName, $tableName)) {
+                        $this->grantUsageToOldTable(
+                            $database,
+                            $schemaName,
+                            $tableName,
+                            $mainRole,
+                            $ownershipOnTable['granted_by']
+                        );
                         $this->logger->info(sprintf('Cloning table "%s" from OLD database', $tableName));
                         $this->destinationConnection->query(sprintf(
                             'CREATE TABLE %s.%s.%s CLONE %s.%s.%s;',
@@ -1379,18 +1379,23 @@ SQL;
         return $mapGrants;
     }
 
-    private function canCloneTable(string $database, string $schema, string $table): bool
+    private function canCloneTable(string $mainRole, string $database, string $schema, string $table): bool
     {
 
         $sqlTemplate = 'SELECT max("_timestamp") as "maxTimestamp" FROM %s.%s.%s';
 
+        $currentRole = $this->destinationConnection->getCurrentRole();
         try {
+            $this->destinationConnection->useRole($mainRole);
+
             $lastUpdateTableInOldDatabase = $this->destinationConnection->fetchAll(sprintf(
                 $sqlTemplate,
                 Helper::quoteIdentifier($database . '_OLD'),
                 Helper::quoteIdentifier($schema),
                 Helper::quoteIdentifier($table)
             ));
+
+            $this->destinationConnection->useRole($this->mainMigrationRoleTargetAccount);
             $lastUpdateTableInShareDatabase = $this->destinationConnection->fetchAll(sprintf(
                 $sqlTemplate,
                 Helper::quoteIdentifier($database . '_SHARE'),
@@ -1399,13 +1404,20 @@ SQL;
             ));
         } catch (RuntimeException $e) {
             return false;
+        } finally {
+            $this->destinationConnection->useRole($currentRole);
         }
 
         return $lastUpdateTableInOldDatabase[0]['maxTimestamp'] === $lastUpdateTableInShareDatabase[0]['maxTimestamp'];
     }
 
-    private function grantsPrivilegesToOldDatabase(string $database, string $databaseRole, string $mainRole): void
-    {
+    private function grantUsageToOldTable(
+        string $database,
+        string $schema,
+        string $table,
+        string $mainRole,
+        string $role
+    ): void {
         $currentRole = $this->destinationConnection->getCurrentRole();
         $this->destinationConnection->useRole($mainRole);
         $dbExists = $this->destinationConnection->fetchAll(sprintf(
@@ -1415,21 +1427,25 @@ SQL;
         if (!$dbExists) {
             return;
         }
+
         $sqls = [
             sprintf(
-                'grant all on database %s to role %s;',
+                'grant usage on database %s to role %s;',
                 Helper::quoteIdentifier($database . '_OLD'),
-                $databaseRole
+                Helper::quoteIdentifier($role)
             ),
             sprintf(
-                'grant all on all schemas in database %s to role %s;',
+                'grant usage on schema %s.%s to role %s;',
                 Helper::quoteIdentifier($database . '_OLD'),
-                $databaseRole
+                Helper::quoteIdentifier($schema),
+                Helper::quoteIdentifier($role)
             ),
             sprintf(
-                'grant all on all tables in database %s to role %s;',
+                'grant select on table %s.%s.%s to role %s;',
                 Helper::quoteIdentifier($database . '_OLD'),
-                $databaseRole
+                Helper::quoteIdentifier($schema),
+                Helper::quoteIdentifier($table),
+                Helper::quoteIdentifier($role)
             ),
         ];
 
