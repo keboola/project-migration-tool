@@ -19,6 +19,7 @@ class Helper
                 'roles' => [],
                 'warehouse' => [],
                 'user' => [],
+                'views' => [],
                 'other' => [],
             ],
             'futureGrants' => [
@@ -49,6 +50,9 @@ class Helper
                         break;
                     case 'USER':
                         $tmp['grants']['user'][] = $assignedGrant;
+                        break;
+                    case 'VIEW':
+                        $tmp['grants']['views'][] = $assignedGrant;
                         break;
                     default:
                         $tmp['grants']['other'][] = $assignedGrant;
