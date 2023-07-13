@@ -76,7 +76,7 @@ class Component extends BaseComponent
         $migrate->reApplyFailedGrants();
 
         $this->getLogger()->info('Post-migration cleanup.');
-        $migrate->postMigrationCleanup();
+//        $migrate->postMigrationCleanup();
 
         $migrate->printUnusedGrants($rolesGrants);
     }

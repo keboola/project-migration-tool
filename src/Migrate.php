@@ -392,6 +392,7 @@ SQL;
                     'databases' => $databaseGrants,
                     'schemas' => $schemasGrants,
                     'tables' => $tablesGrants,
+                    'views' => $viewsGrants,
                 ],
                 'futureGrants' => [
                     'tables' => $tablesFutureGrants,
@@ -598,6 +599,35 @@ SQL;
                         $this->destinationConnection->assignGrantToRole($tableGrant);
                     }
                 }
+            }
+
+            $this->logger->info(sprintf('Cloning views from database "%s"', $database));
+            $this->sourceConnection->grantRoleToUser($this->config->getSourceSnowflakeUser(), $databaseRole);
+            $this->sourceConnection->useRole($databaseRole);
+            $views = $this->sourceConnection->fetchAll(sprintf(
+                'SHOW VIEWS IN DATABASE %s;',
+                Helper::quoteIdentifier($database),
+            ));
+
+            $views = array_filter($views, fn($v) => !in_array($v['schema_name'], self::SKIP_CLONE_SCHEMAS));
+
+            foreach ($views as $view) {
+                $this->destinationConnection->useRole($view['owner']);
+
+                $this->destinationConnection->query(sprintf(
+                    'USE SCHEMA %s.%s;',
+                    Helper::quoteIdentifier($view['database_name']),
+                    Helper::quoteIdentifier($view['schema_name'])
+                ));
+
+                $this->destinationConnection->query($view['text']);
+            }
+
+            foreach ($viewsGrants as $viewsGrant) {
+                if ($viewsGrant['privilege'] === 'OWNERSHIP') {
+                    continue;
+                }
+                $this->destinationConnection->assignGrantToRole($viewsGrant);
             }
         }
     }
