@@ -67,6 +67,8 @@ class Migrate
         $currentRole = $this->mainMigrationRoleTargetAccount;
         $this->destinationConnection->grantRoleToUser($this->config->getTargetSnowflakeUser(), $mainRoleName);
         foreach ($this->databases as $database) {
+            $this->destinationConnection->useRole($this->mainMigrationRoleTargetAccount);
+
             $dbExists = $this->destinationConnection->fetchAll(sprintf(
                 'SHOW DATABASES LIKE %s;',
                 QueryBuilder::quote($database)
