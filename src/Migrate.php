@@ -388,6 +388,7 @@ SQL;
     public function cloneDatabaseWithGrants(string $mainRole, array $grants): void
     {
         foreach ($this->databases as $database) {
+            $this->sourceConnection->useRole($this->mainMigrationRoleSourceAccount);
             $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
             [
                 'grants' => [
