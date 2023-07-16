@@ -13,6 +13,7 @@ use ProjectMigrationTool\Snowflake\Connection;
 use ProjectMigrationTool\Snowflake\Helper;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Process\Process;
+use Throwable;
 
 class Migrate
 {
@@ -624,7 +625,17 @@ SQL;
                     Helper::quoteIdentifier($view['schema_name'])
                 ));
 
-                $this->destinationConnection->query($view['text']);
+                try {
+                    $this->destinationConnection->query($view['text']);
+                } catch (Throwable $e) {
+                    $this->logger->warning(sprintf(
+                        'Warning: Skip creating view %s.%s.%s. Error: "%s".',
+                        Helper::quoteIdentifier($view['database_name']),
+                        Helper::quoteIdentifier($view['schema_name']),
+                        Helper::quoteIdentifier($view['name']),
+                        $e->getMessage()
+                    ));
+                }
             }
 
             foreach ($viewsGrants as $viewsGrant) {
@@ -683,7 +694,17 @@ SQL;
                     Helper::quoteIdentifier($function['schema_name'])
                 ));
 
-                $this->destinationConnection->query($functionQuery);
+                try {
+                    $this->destinationConnection->query($functionQuery);
+                } catch (Throwable $e) {
+                    $this->logger->warning(sprintf(
+                        'Skip creating function %s.%s.%s. Error: "%s".',
+                        Helper::quoteIdentifier($function['catalog_name']),
+                        Helper::quoteIdentifier($function['schema_name']),
+                        Helper::quoteIdentifier($function['name']),
+                        $e->getMessage()
+                    ));
+                }
             }
 
             foreach ($functionsGrants as $functionsGrant) {
