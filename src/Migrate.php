@@ -628,8 +628,8 @@ SQL;
                 try {
                     $this->destinationConnection->query($view['text']);
                 } catch (Throwable $e) {
-                    $this->logger->warning(sprintf(
-                        'Warning: Skip creating view %s.%s.%s. Error: "%s".',
+                    $this->logger->info(sprintf(
+                        'Skip creating view %s.%s.%s. Error: "%s".',
                         Helper::quoteIdentifier($view['database_name']),
                         Helper::quoteIdentifier($view['schema_name']),
                         Helper::quoteIdentifier($view['name']),
@@ -697,7 +697,7 @@ SQL;
                 try {
                     $this->destinationConnection->query($functionQuery);
                 } catch (Throwable $e) {
-                    $this->logger->warning(sprintf(
+                    $this->logger->info(sprintf(
                         'Skip creating function %s.%s.%s. Error: "%s".',
                         Helper::quoteIdentifier($function['catalog_name']),
                         Helper::quoteIdentifier($function['schema_name']),
