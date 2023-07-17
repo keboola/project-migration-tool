@@ -629,7 +629,7 @@ SQL;
                     $this->destinationConnection->query($view['text']);
                 } catch (Throwable $e) {
                     $this->logger->info(sprintf(
-                        'Skip creating view %s.%s.%s. Error: "%s".',
+                        'Warning: Skip creating view %s.%s.%s. Error: "%s".',
                         Helper::quoteIdentifier($view['database_name']),
                         Helper::quoteIdentifier($view['schema_name']),
                         Helper::quoteIdentifier($view['name']),
@@ -657,7 +657,7 @@ SQL;
             foreach ($functions as $function) {
                 if ($function['language'] !== 'SQL') {
                     $this->logger->warning(sprintf(
-                        'Skip creating function "%s". Language "%s" is not supported.',
+                        'Warning: Skip creating function "%s". Language "%s" is not supported.',
                         Helper::quoteIdentifier($function['name']),
                         $function['language']
                     ));
