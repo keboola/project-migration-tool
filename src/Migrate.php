@@ -1590,7 +1590,7 @@ SQL;
         );
     }
 
-    private function assignForeignGrants(mixed $grants, string $databaseRole)
+    private function assignForeignGrants(array $grants, string $databaseRole): void
     {
         $foreignGrants = array_filter($grants, fn($v) => $v['granted_by'] !== $databaseRole);
 
