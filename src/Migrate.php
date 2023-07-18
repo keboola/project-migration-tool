@@ -434,6 +434,7 @@ SQL;
             }
 
             $this->assignSharePrivilegesToRole($database, $databaseRole);
+            $this->assignForeignGrants($schemasGrants, $databaseRole);
 
             $this->destinationConnection->useRole($databaseRole);
 
@@ -1589,5 +1590,12 @@ SQL;
             $functionParams['returns'],
             trim($functionParams['body'])
         );
+    }
+
+    private function assignForeignGrants(mixed $grants, string $databaseRole)
+    {
+        $foreignGrants = array_filter($grants, fn($v) => $v['granted_by'] !== $databaseRole);
+
+        array_walk($foreignGrants, fn($grant) => $this->destinationConnection->assignGrantToRole($grant));
     }
 }
