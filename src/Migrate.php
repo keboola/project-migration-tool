@@ -680,14 +680,12 @@ SQL;
                 );
                 $functionQuery = $this->buildFunctionQuery($function, $functionParams);
 
-                $schemaGrants = Helper::filterSchemaGrants(
-                    $function['catalog_name'],
-                    $function['schema_name'],
-                    $schemasGrants
+                $ownership = array_filter(
+                    $functionsGrants,
+                    fn($v) => str_contains($v['granted_by'], $function['schema_name'])
                 );
-                $ownershipOnSchema = array_filter($schemaGrants, fn($v) => $v['privilege'] === 'OWNERSHIP');
 
-                $this->destinationConnection->useRole(current($ownershipOnSchema)['granted_by']);
+                $this->destinationConnection->useRole(current($ownership)['granted_by']);
 
                 $this->destinationConnection->query(sprintf(
                     'USE SCHEMA %s.%s;',
