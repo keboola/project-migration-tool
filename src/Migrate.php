@@ -1229,8 +1229,7 @@ SQL;
 
     public function printUnusedGrants(array $grants): void
     {
-        foreach ($this->databases as $database) {
-            $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
+        foreach ($grants as $databaseGrants) {
             [
                 'grants' => [
                     'other' => $otherGrants,
@@ -1238,7 +1237,7 @@ SQL;
                 'futureGrants' => [
                     'other' => $otherFutureGrants,
                 ],
-            ] = Helper::parseGrantsToObjects($grants[$databaseRole]);
+            ] = Helper::parseGrantsToObjects($databaseGrants);
 
             foreach ($otherGrants as $grant) {
                 $this->logger->alert(sprintf(
