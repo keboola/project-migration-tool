@@ -981,8 +981,10 @@ SQL;
         $this->destinationConnection->query($useWarehouse);
 
         foreach ($this->databases as $database) {
+            $this->logger->info(sprintf('Checking database %s', $database));
             $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
 
+            $this->logger->info(sprintf('Getting roles and users for database %s', $database));
             $rolesAndUsers = $this->listRolesAndUsers($databaseRole);
             $rolesAndUsers = array_merge_recursive(
                 $rolesAndUsers,
@@ -1267,12 +1269,14 @@ SQL;
 
     private function compareData(string $group, string $itemNameKey, string $sql): void
     {
+        $this->logger->info(sprintf('Getting source data for "%s".', $group));
         $sourceData = $this->sourceConnection->fetchAll($sql);
+        $this->logger->info(sprintf('Getting target data for "%s".', $group));
         $targetData = $this->destinationConnection->fetchAll($sql);
 
         if (count($sourceData) !== count($targetData)) {
-            $this->logger->alert(sprintf(
-                '%s: Source data count (%s) does not equal target data count (%s)',
+            $this->logger->info(sprintf(
+                'Alert - %s: Source data count (%s) does not equal target data count (%s)',
                 $group,
                 count($sourceData),
                 count($targetData)
@@ -1292,11 +1296,19 @@ SQL;
         foreach ($diffs as $diff) {
             foreach ($diff as $k => $serializeItem) {
                 if (!isset($sourceData[$k])) {
-                    $this->logger->alert(sprintf('%s: Item "%s" doesn\'t exists in source account', $group, $k));
+                    $this->logger->info(sprintf(
+                        'Alert - %s: Item "%s" doesn\'t exists in source account',
+                        $group,
+                        $k
+                    ));
                     continue;
                 }
                 if (!isset($targetData[$k])) {
-                    $this->logger->alert(sprintf('%s: Item "%s" doesn\'t exists in target account', $group, $k));
+                    $this->logger->info(sprintf(
+                        'Alert - %s: Item "%s" doesn\'t exists in target account',
+                        $group,
+                        $k
+                    ));
                     continue;
                 }
                 $itemSource = (array) unserialize($sourceData[$k]);
@@ -1326,8 +1338,8 @@ SQL;
         }
         array_walk($data, fn(&$v, $k) => $v = sprintf('%s: %s', $k, $v));
 
-        $this->logger->alert(sprintf(
-            '%s: "%s" is not same. Missing in %s account (%s)',
+        $this->logger->info(sprintf(
+            'Alert - %s: "%s" is not same. Missing in %s account (%s)',
             $group,
             $name,
             $missingIn,
