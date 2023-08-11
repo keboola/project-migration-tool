@@ -656,15 +656,6 @@ SQL;
 
             $this->destinationConnection->query('USE DATABASE ' . Helper::quoteIdentifier($database) . ';');
             foreach ($functions as $function) {
-                if ($function['language'] !== 'SQL') {
-                    $this->logger->warning(sprintf(
-                        'Warning: Skip creating function "%s". Language "%s" is not supported.',
-                        Helper::quoteIdentifier($function['name']),
-                        $function['language']
-                    ));
-                    continue;
-                }
-
                 preg_match('/.*\((.*)\) RETURN/', $function['arguments'], $matches);
                 $descFunction = $this->sourceConnection->fetchAll(sprintf(
                     'DESC FUNCTION %s.%s.%s(%s)',
@@ -678,7 +669,22 @@ SQL;
                     array_map(fn($v) => $v['property'], $descFunction),
                     array_map(fn($v) => $v['value'], $descFunction)
                 );
-                $functionQuery = $this->buildFunctionQuery($function, $functionParams);
+
+                switch ($function['language']) {
+                    case 'SQL':
+                        $functionQuery = $this->buildSqlFunctionQuery($function, $functionParams);
+                        break;
+                    case 'PYTHON':
+                        $functionQuery = $this->buildPythonFunctionQuery($function, $functionParams);
+                        break;
+                    default:
+                        $this->logger->warning(sprintf(
+                            'Warning: Skip creating function "%s". Language "%s" is not supported.',
+                            Helper::quoteIdentifier($function['name']),
+                            $function['language']
+                        ));
+                        continue 2;
+                }
 
                 $ownership = array_filter(
                     $functionsGrants,
@@ -1579,7 +1585,7 @@ SQL;
         $this->destinationConnection->useRole($currentRole);
     }
 
-    private function buildFunctionQuery(array $function, array $functionParams): string
+    private function buildSqlFunctionQuery(array $function, array $functionParams): string
     {
         $sql = <<<SQL
 CREATE %s FUNCTION %s%s
@@ -1597,6 +1603,40 @@ SQL;
             Helper::quoteIdentifier($function['name']),
             $functionParams['signature'],
             $functionParams['returns'],
+            trim($functionParams['body'])
+        );
+    }
+
+    private function buildPythonFunctionQuery(array $function, array $functionParams): string
+    {
+        $python = <<<SQL
+CREATE FUNCTION %s%s
+RETURNS %s 
+LANGUAGE PYTHON
+RUNTIME_VERSION=%s
+HANDLER=%s
+%s
+%s
+AS 
+$$
+%s
+$$
+;
+SQL;
+
+        return sprintf(
+            $python,
+            Helper::quoteIdentifier($function['name']),
+            $functionParams['signature'],
+            $functionParams['returns'],
+            $functionParams['runtime_version'],
+            QueryBuilder::quote($functionParams['handler']),
+            $functionParams['imports'] !== '[]' ?
+                'IMPORTS = (' . substr($functionParams['imports'], 1, -1) . ')' :
+                '',
+            $functionParams['packages'] !== '[]' ?
+                'PACKAGES = (' . substr($functionParams['packages'], 1, -1) . ')' :
+                '',
             trim($functionParams['body'])
         );
     }
