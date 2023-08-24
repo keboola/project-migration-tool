@@ -27,7 +27,8 @@ class MigrateFactory
             $config->getSourceSnowflakePassword(),
             $config->getSourceSnowflakeWarehouse(),
             $config->getSourceSnowflakeRole(),
-            $logger,
+            'source',
+            $logger
         );
         $this->sourceConnection->useRole($config->getSourceSnowflakeRole());
 
@@ -38,7 +39,8 @@ class MigrateFactory
                 $config->getMigrationSnowflakePassword(),
                 $config->getMigrationSnowflakeWarehouse(),
                 $config->getMigrationSnowflakeRole(),
-                $logger,
+                'migrate',
+                $logger
             );
             $this->migrateConnection->useRole($config->getMigrationSnowflakeRole());
         }
@@ -48,7 +50,8 @@ class MigrateFactory
             $config->getTargetSnowflakePassword(),
             $config->getTargetSnowflakeWarehouse(),
             $config->getTargetSnowflakeRole(),
-            $logger,
+            'destination',
+            $logger
         );
         $this->targetConnection->useRole($config->getTargetSnowflakeRole());
     }

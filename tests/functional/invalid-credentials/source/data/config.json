@@ -1,0 +1,29 @@
+{
+  "parameters": {
+    "action": "run",
+    "credentials": {
+      "source": {
+        "host": "keboola.eu-central-1.snowflakecomputing.com",
+        "role": "[ORG_NAME]_MIGRATE",
+        "username": "[ORG_NAME]_MIGRATE",
+        "#password": "[the password provided in step 1.4]",
+        "warehouse": "KEBOOLA_PROD"
+      },
+      "target": {
+        "host": "abc123.eu-central-1.snowflakecomputing.com",
+        "role": "TARGET_MAIN_MIGRATE",
+        "username": "MIGRATE",
+        "#password": "[the password provided in step 1.2]",
+        "warehouse": "KEBOOLA_PROD"
+      }
+    },
+    "migrateDatabases": [
+      "KEBOOLA_[PROJECT_ID_1]",
+      "KEBOOLA_[PROJECT_ID_2]",
+      "KEBOOLA_[PROJECT_ID_3]"
+    ],
+    "synchronize": {
+      "dryPremigrationCleanupRun": true
+    }
+  }
+}
