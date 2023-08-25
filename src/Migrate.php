@@ -1631,26 +1631,37 @@ SQL;
 
         $views = array_filter($views, fn($v) => !in_array($v['schema_name'], self::SKIP_CLONE_SCHEMAS));
 
-        foreach ($views as $view) {
-            $this->destinationConnection->useRole($view['owner']);
-
-            $this->destinationConnection->query(sprintf(
-                'USE SCHEMA %s.%s;',
-                Helper::quoteIdentifier($view['database_name']),
-                Helper::quoteIdentifier($view['schema_name'])
-            ));
-
-            try {
-                $this->destinationConnection->query($view['text']);
-            } catch (Throwable $e) {
+        $try = 0;
+        while ($views && $try < 5) {
+            if ($try > 0) {
                 $this->logger->info(sprintf(
-                    'Warning: Skip creating view %s.%s.%s. Error: "%s".',
-                    Helper::quoteIdentifier($view['database_name']),
-                    Helper::quoteIdentifier($view['schema_name']),
-                    Helper::quoteIdentifier($view['name']),
-                    $e->getMessage()
+                    'Attempting to create %s failed views.',
+                    count($views)
                 ));
             }
+            foreach ($views as $viewKey => $view) {
+                $this->destinationConnection->useRole($view['owner']);
+
+                $this->destinationConnection->query(sprintf(
+                    'USE SCHEMA %s.%s;',
+                    Helper::quoteIdentifier($view['database_name']),
+                    Helper::quoteIdentifier($view['schema_name'])
+                ));
+
+                try {
+                    $this->destinationConnection->query($view['text']);
+                    unset($views[$viewKey]);
+                } catch (Throwable $e) {
+                    $this->logger->info(sprintf(
+                        'Warning: Skip creating view %s.%s.%s. Error: "%s".',
+                        Helper::quoteIdentifier($view['database_name']),
+                        Helper::quoteIdentifier($view['schema_name']),
+                        Helper::quoteIdentifier($view['name']),
+                        $e->getMessage()
+                    ));
+                }
+            }
+            $try++;
         }
 
         foreach ($viewsGrants as $viewsGrant) {
