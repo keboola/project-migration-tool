@@ -116,7 +116,7 @@ class MigrateStructure
                 $schemaFutureGrants = Helper::filterSchemaGrants(
                     $database,
                     $schemaName,
-                    $projectRoles->getTableGrantsFromAllRoles()
+                    $projectRoles->getFutureTableGrantsFromAllRoles()
                 );
                 $ownershipOnSchema = array_filter($schemaGrants, fn($v) => $v->getPrivilege() === 'OWNERSHIP');
                 assert(count($ownershipOnSchema) === 1);

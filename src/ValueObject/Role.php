@@ -45,11 +45,17 @@ class Role
 
     public function setGrants(RoleGrants $roleGrants): void
     {
+        foreach ($roleGrants->getAllGrants() as $grant) {
+            assert($grant->getGranteeName() === $this->getName(), 'Grant is not assigned to this role');
+        }
         $this->assignedGrants = $roleGrants;
     }
 
     public function setFutureGrants(RoleFutureGrants $roleFutureGrants): void
     {
+        foreach ($roleFutureGrants->getAllGrants() as $grant) {
+            assert($grant->getGranteeName() === $this->getName(), 'Future grant is not assigned to this role');
+        }
         $this->assignedFutureRoles = $roleFutureGrants;
     }
 }

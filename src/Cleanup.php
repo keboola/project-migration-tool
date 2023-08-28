@@ -167,37 +167,37 @@ class Cleanup
                     Helper::quoteIdentifier($removeDatabase['name'])
                 ));
             }
+        }
 
-            /** @var GrantToUser[] $userRoles */
-            $userRoles = array_map(
-                fn(array $v) => GrantToUser::fromArray($v),
-                $this->destinationConnection->fetchAll(sprintf(
-                    'SHOW GRANTS TO USER %s',
-                    Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
-                ))
-            );
+        /** @var GrantToUser[] $userRoles */
+        $userRoles = array_map(
+            fn(array $v) => GrantToUser::fromArray($v),
+            $this->destinationConnection->fetchAll(sprintf(
+                'SHOW GRANTS TO USER %s',
+                Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
+            ))
+        );
 
-            foreach (array_reverse($userRoles) as $userRole) {
-                if ($userRole->getRole() === $this->config->getTargetSnowflakeRole()) {
-                    continue;
+        foreach (array_reverse($userRoles) as $userRole) {
+            if ($userRole->getRole() === $this->config->getTargetSnowflakeRole()) {
+                continue;
+            }
+            try {
+                if ($userRole->getGrantedBy()) {
+                    $this->destinationConnection->useRole($userRole->getGrantedBy());
+                } else {
+                    $this->destinationConnection->useRole($this->config->getTargetSnowflakeRole());
                 }
-                try {
-                    if ($userRole->getGrantedBy()) {
-                        $this->destinationConnection->useRole($userRole->getGrantedBy());
-                    } else {
-                        $this->destinationConnection->useRole($this->config->getTargetSnowflakeRole());
-                    }
-                    $this->destinationConnection->query(sprintf(
-                        'REVOKE ROLE %s FROM USER %s',
-                        Helper::quoteIdentifier($userRole->getRole()),
-                        Helper::quoteIdentifier($userRole->getGranteeName()),
-                    ));
-                } catch (RuntimeException $e) {
-                    $this->logger->info(sprintf(
-                        'Warning: Query failed, please check manually: %s',
-                        $e->getMessage()
-                    ));
-                }
+                $this->destinationConnection->query(sprintf(
+                    'REVOKE ROLE %s FROM USER %s',
+                    Helper::quoteIdentifier($userRole->getRole()),
+                    Helper::quoteIdentifier($userRole->getGranteeName()),
+                ));
+            } catch (RuntimeException $e) {
+                $this->logger->info(sprintf(
+                    'Warning: Query failed, please check manually: %s',
+                    $e->getMessage()
+                ));
             }
         }
     }

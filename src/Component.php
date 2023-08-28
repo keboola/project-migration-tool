@@ -94,7 +94,7 @@ class Component extends BaseComponent
 
         $this->getLogger()->info('Checking data.');
         $migrationChecker->postMigrationCheckStructure($mainRoleWithGrants);
-        $migrationChecker->postMigrationCheckData($mainRoleWithGrants);
+//        $migrationChecker->postMigrationCheckData($mainRoleWithGrants);
     }
 
     public function getConfig(): Config

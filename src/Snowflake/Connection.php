@@ -209,7 +209,7 @@ class Connection extends AdapterConnection
         $ownershipOnDatabase = array_filter($grantsOnDatabase, fn($v) => $v->getPrivilege() === 'OWNERSHIP');
         assert(count($ownershipOnDatabase) === 1);
 
-        return (string) current($ownershipOnDatabase)->getGranteeName();
+        return current($ownershipOnDatabase)->getGranteeName();
     }
 
     public function getFailedGrants(): array
