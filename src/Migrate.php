@@ -398,6 +398,7 @@ SQL;
                     'tables' => $tablesGrants,
                     'views' => $viewsGrants,
                     'functions' => $functionsGrants,
+                    'procedures' => $proceduresGrants,
                 ],
                 'futureGrants' => [
                     'tables' => $tablesFutureGrants,
@@ -607,117 +608,11 @@ SQL;
                 }
             }
 
-            $this->logger->info(sprintf('Cloning views from database "%s"', $database));
-            $this->sourceConnection->grantRoleToUser($this->config->getSourceSnowflakeUser(), $databaseRole);
-            $this->sourceConnection->useRole($databaseRole);
-            $views = $this->sourceConnection->fetchAll(sprintf(
-                'SHOW VIEWS IN DATABASE %s;',
-                Helper::quoteIdentifier($database),
-            ));
+            $this->copyViews($database, $databaseRole, $viewsGrants);
 
-            $views = array_filter($views, fn($v) => !in_array($v['schema_name'], self::SKIP_CLONE_SCHEMAS));
+            $this->copyFunctions($database, $functionsGrants);
 
-            foreach ($views as $view) {
-                $this->destinationConnection->useRole($view['owner']);
-
-                $this->destinationConnection->query(sprintf(
-                    'USE SCHEMA %s.%s;',
-                    Helper::quoteIdentifier($view['database_name']),
-                    Helper::quoteIdentifier($view['schema_name'])
-                ));
-
-                try {
-                    $this->destinationConnection->query($view['text']);
-                } catch (Throwable $e) {
-                    $this->logger->info(sprintf(
-                        'Warning: Skip creating view %s.%s.%s. Error: "%s".',
-                        Helper::quoteIdentifier($view['database_name']),
-                        Helper::quoteIdentifier($view['schema_name']),
-                        Helper::quoteIdentifier($view['name']),
-                        $e->getMessage()
-                    ));
-                }
-            }
-
-            foreach ($viewsGrants as $viewsGrant) {
-                if ($viewsGrant['privilege'] === 'OWNERSHIP') {
-                    continue;
-                }
-                $this->destinationConnection->assignGrantToRole($viewsGrant);
-            }
-
-            $this->logger->info(sprintf('Cloning functions from database "%s"', $database));
-            $functions = $this->sourceConnection->fetchAll(sprintf(
-                'SHOW FUNCTIONS IN DATABASE %s;',
-                Helper::quoteIdentifier($database),
-            ));
-
-            $functions = array_filter($functions, fn($v) => $v['catalog_name'] === $database);
-
-            $this->destinationConnection->query('USE DATABASE ' . Helper::quoteIdentifier($database) . ';');
-            foreach ($functions as $function) {
-                preg_match('/.*\((.*)\) RETURN/', $function['arguments'], $matches);
-                $descFunction = $this->sourceConnection->fetchAll(sprintf(
-                    'DESC FUNCTION %s.%s.%s(%s)',
-                    Helper::quoteIdentifier($function['catalog_name']),
-                    Helper::quoteIdentifier($function['schema_name']),
-                    Helper::quoteIdentifier($function['name']),
-                    $matches[1]
-                ));
-
-                $functionParams = array_combine(
-                    array_map(fn($v) => $v['property'], $descFunction),
-                    array_map(fn($v) => $v['value'], $descFunction)
-                );
-
-                switch ($function['language']) {
-                    case 'SQL':
-                        $functionQuery = $this->buildSqlFunctionQuery($function, $functionParams);
-                        break;
-                    case 'PYTHON':
-                        $functionQuery = $this->buildPythonFunctionQuery($function, $functionParams);
-                        break;
-                    default:
-                        $this->logger->warning(sprintf(
-                            'Warning: Skip creating function "%s". Language "%s" is not supported.',
-                            Helper::quoteIdentifier($function['name']),
-                            $function['language']
-                        ));
-                        continue 2;
-                }
-
-                $ownership = array_filter(
-                    $functionsGrants,
-                    fn($v) => str_contains($v['granted_by'], $function['schema_name'])
-                );
-
-                $this->destinationConnection->useRole(current($ownership)['granted_by']);
-
-                $this->destinationConnection->query(sprintf(
-                    'USE SCHEMA %s.%s;',
-                    Helper::quoteIdentifier($function['catalog_name']),
-                    Helper::quoteIdentifier($function['schema_name'])
-                ));
-
-                try {
-                    $this->destinationConnection->query($functionQuery);
-                } catch (Throwable $e) {
-                    $this->logger->info(sprintf(
-                        'Skip creating function %s.%s.%s. Error: "%s".',
-                        Helper::quoteIdentifier($function['catalog_name']),
-                        Helper::quoteIdentifier($function['schema_name']),
-                        Helper::quoteIdentifier($function['name']),
-                        $e->getMessage()
-                    ));
-                }
-            }
-
-            foreach ($functionsGrants as $functionsGrant) {
-                if ($functionsGrant['privilege'] === 'OWNERSHIP') {
-                    continue;
-                }
-                $this->destinationConnection->assignGrantToRole($functionsGrant);
-            }
+            $this->copyProcedures($database, $proceduresGrants);
         }
     }
 
@@ -1646,5 +1541,327 @@ SQL;
         $foreignGrants = array_filter($grants, fn($v) => $v['granted_by'] !== $databaseRole);
 
         array_walk($foreignGrants, fn($grant) => $this->destinationConnection->assignGrantToRole($grant));
+    }
+
+    private function copyFunctions(string $database, array $functionsGrants): void
+    {
+        $this->logger->info(sprintf('Cloning functions from database "%s"', $database));
+        $functions = $this->sourceConnection->fetchAll(sprintf(
+            'SHOW FUNCTIONS IN DATABASE %s;',
+            Helper::quoteIdentifier($database),
+        ));
+
+        $functions = array_filter($functions, fn($v) => $v['catalog_name'] === $database);
+
+        $this->destinationConnection->query('USE DATABASE ' . Helper::quoteIdentifier($database) . ';');
+        foreach ($functions as $function) {
+            preg_match('/.*\((.*)\) RETURN/', $function['arguments'], $matches);
+            $descFunction = $this->sourceConnection->fetchAll(sprintf(
+                'DESC FUNCTION %s.%s.%s(%s)',
+                Helper::quoteIdentifier($function['catalog_name']),
+                Helper::quoteIdentifier($function['schema_name']),
+                Helper::quoteIdentifier($function['name']),
+                $matches[1]
+            ));
+
+            $functionParams = array_combine(
+                array_map(fn($v) => $v['property'], $descFunction),
+                array_map(fn($v) => $v['value'], $descFunction)
+            );
+
+            switch ($function['language']) {
+                case 'SQL':
+                    $functionQuery = $this->buildSqlFunctionQuery($function, $functionParams);
+                    break;
+                case 'PYTHON':
+                    $functionQuery = $this->buildPythonFunctionQuery($function, $functionParams);
+                    break;
+                default:
+                    $this->logger->warning(sprintf(
+                        'Warning: Skip creating function "%s". Language "%s" is not supported.',
+                        Helper::quoteIdentifier($function['name']),
+                        $function['language']
+                    ));
+                    continue 2;
+            }
+
+            $ownership = array_filter(
+                $functionsGrants,
+                fn($v) => str_contains($v['granted_by'], $function['schema_name'])
+            );
+
+            $this->destinationConnection->useRole(current($ownership)['granted_by']);
+
+            $this->destinationConnection->query(sprintf(
+                'USE SCHEMA %s.%s;',
+                Helper::quoteIdentifier($function['catalog_name']),
+                Helper::quoteIdentifier($function['schema_name'])
+            ));
+
+            try {
+                $this->destinationConnection->query($functionQuery);
+            } catch (Throwable $e) {
+                $this->logger->info(sprintf(
+                    'Skip creating function %s.%s.%s. Error: "%s".',
+                    Helper::quoteIdentifier($function['catalog_name']),
+                    Helper::quoteIdentifier($function['schema_name']),
+                    Helper::quoteIdentifier($function['name']),
+                    $e->getMessage()
+                ));
+            }
+        }
+
+        foreach ($functionsGrants as $functionsGrant) {
+            if ($functionsGrant['privilege'] === 'OWNERSHIP') {
+                continue;
+            }
+            $this->destinationConnection->assignGrantToRole($functionsGrant);
+        }
+    }
+
+    private function copyViews(string $database, string $databaseRole, array $viewsGrants): void
+    {
+        $this->logger->info(sprintf('Cloning views from database "%s"', $database));
+        $this->sourceConnection->grantRoleToUser($this->config->getSourceSnowflakeUser(), $databaseRole);
+        $this->sourceConnection->useRole($databaseRole);
+        $views = $this->sourceConnection->fetchAll(sprintf(
+            'SHOW VIEWS IN DATABASE %s;',
+            Helper::quoteIdentifier($database),
+        ));
+
+        $views = array_filter($views, fn($v) => !in_array($v['schema_name'], self::SKIP_CLONE_SCHEMAS));
+
+        foreach ($views as $view) {
+            $this->destinationConnection->useRole($view['owner']);
+
+            $this->destinationConnection->query(sprintf(
+                'USE SCHEMA %s.%s;',
+                Helper::quoteIdentifier($view['database_name']),
+                Helper::quoteIdentifier($view['schema_name'])
+            ));
+
+            try {
+                $this->destinationConnection->query($view['text']);
+            } catch (Throwable $e) {
+                $this->logger->info(sprintf(
+                    'Warning: Skip creating view %s.%s.%s. Error: "%s".',
+                    Helper::quoteIdentifier($view['database_name']),
+                    Helper::quoteIdentifier($view['schema_name']),
+                    Helper::quoteIdentifier($view['name']),
+                    $e->getMessage()
+                ));
+            }
+        }
+
+        foreach ($viewsGrants as $viewsGrant) {
+            if ($viewsGrant['privilege'] === 'OWNERSHIP') {
+                continue;
+            }
+            $this->destinationConnection->assignGrantToRole($viewsGrant);
+        }
+    }
+
+    private function copyProcedures(string $database, array $proceduresGrants): void
+    {
+        $this->logger->info(sprintf('Cloning procedures from database "%s"', $database));
+
+        $procedures = $this->sourceConnection->fetchAll(sprintf(
+            'SHOW PROCEDURES IN DATABASE %s;',
+            Helper::quoteIdentifier($database),
+        ));
+
+        $procedures = array_filter($procedures, fn($v) => $v['catalog_name'] === $database);
+
+        foreach ($procedures as $procedure) {
+            preg_match('/.*\((.*)\) RETURN/', $procedure['arguments'], $matches);
+            $descFunction = $this->sourceConnection->fetchAll(sprintf(
+                'DESC PROCEDURE %s.%s.%s(%s)',
+                Helper::quoteIdentifier($procedure['catalog_name']),
+                Helper::quoteIdentifier($procedure['schema_name']),
+                Helper::quoteIdentifier($procedure['name']),
+                $matches[1]
+            ));
+
+            $procedureParams = array_combine(
+                array_map(fn($v) => $v['property'], $descFunction),
+                array_map(fn($v) => $v['value'], $descFunction)
+            );
+
+            switch ($procedureParams['language']) {
+                case 'SQL':
+                    $procedureQuery = $this->buildSqlProcedureQuery($procedure, $procedureParams);
+                    break;
+                case 'JAVA':
+                    $procedureQuery = $this->buildJavaProcedureQuery($procedure, $procedureParams);
+                    break;
+                case 'JAVASCRIPT':
+                    $procedureQuery = $this->buildJavascriptProcedureQuery($procedure, $procedureParams);
+                    break;
+                case 'PYTHON':
+                    $procedureQuery = $this->buildPythonProcedureQuery($procedure, $procedureParams);
+                    break;
+                default:
+                    $this->logger->warning(sprintf(
+                        'Warning: Skip creating procedure "%s". Language "%s" is not supported.',
+                        Helper::quoteIdentifier($procedure['name']),
+                        $procedure['language']
+                    ));
+                    continue 2;
+            }
+
+            $ownership = array_filter(
+                $proceduresGrants,
+                fn($v) => str_contains($v['granted_by'], $procedure['schema_name'])
+            );
+
+            $this->destinationConnection->useRole(current($ownership)['granted_by']);
+
+            $this->destinationConnection->query(sprintf(
+                'USE SCHEMA %s.%s;',
+                Helper::quoteIdentifier($procedure['catalog_name']),
+                Helper::quoteIdentifier($procedure['schema_name'])
+            ));
+
+            try {
+                $this->destinationConnection->query($procedureQuery);
+            } catch (Throwable $e) {
+                $this->logger->info(sprintf(
+                    'Skip creating procedure %s.%s.%s. Error: "%s".',
+                    Helper::quoteIdentifier($procedure['catalog_name']),
+                    Helper::quoteIdentifier($procedure['schema_name']),
+                    Helper::quoteIdentifier($procedure['name']),
+                    $e->getMessage()
+                ));
+            }
+        }
+
+        foreach ($proceduresGrants as $proceduresGrant) {
+            if ($proceduresGrant['privilege'] === 'OWNERSHIP') {
+                continue;
+            }
+            $this->destinationConnection->assignGrantToRole($proceduresGrant);
+        }
+    }
+
+    private function buildSqlProcedureQuery(array $procedure, array $procedureParams): string
+    {
+        $sql = <<<SQL
+CREATE %s PROCEDURE %s%s
+returns %s 
+language sql
+execute as %s
+AS 
+%s
+;
+SQL;
+
+        return sprintf(
+            $sql,
+            $procedure['is_secure'] === 'Y' ? 'SECURE' : '',
+            Helper::quoteIdentifier($procedure['name']),
+            $procedureParams['signature'],
+            $procedureParams['returns'],
+            $procedureParams['execute as'],
+            trim($procedureParams['body'])
+        );
+    }
+
+    private function buildJavaProcedureQuery(array $procedure, array $procedureParams): string
+    {
+        $sql = <<<SQL
+CREATE %s PROCEDURE %s%s
+returns %s 
+language java
+runtime_version = '%s'
+handler = '%s'
+execute as %s
+%s
+%s
+AS 
+$$
+%s
+$$
+;
+SQL;
+
+        return sprintf(
+            $sql,
+            $procedure['is_secure'] === 'Y' ? 'SECURE' : '',
+            Helper::quoteIdentifier($procedure['name']),
+            $procedureParams['signature'],
+            $procedureParams['returns'],
+            $procedureParams['runtime_version'],
+            $procedureParams['handler'],
+            $procedureParams['execute as'],
+            $procedureParams['packages'] !== '[]' ?
+                'PACKAGES = (' . substr($procedureParams['packages'], 1, -1) . ')' :
+                '',
+            $procedureParams['imports'] !== '[]' ?
+                'IMPORTS = (' . substr($procedureParams['imports'], 1, -1) . ')' :
+                '',
+            trim($procedureParams['body'])
+        );
+    }
+
+    private function buildJavascriptProcedureQuery(array $procedure, array $procedureParams): string
+    {
+        $sql = <<<SQL
+CREATE %s PROCEDURE %s%s
+returns %s 
+language javascript
+execute as %s
+AS 
+$$
+%s
+$$
+;
+SQL;
+
+        return sprintf(
+            $sql,
+            $procedure['is_secure'] === 'Y' ? 'SECURE' : '',
+            Helper::quoteIdentifier($procedure['name']),
+            $procedureParams['signature'],
+            $procedureParams['returns'],
+            $procedureParams['execute as'],
+            trim($procedureParams['body'])
+        );
+    }
+
+    private function buildPythonProcedureQuery(array $procedure, array $procedureParams): string
+    {
+        $sql = <<<SQL
+CREATE %s PROCEDURE %s%s
+returns %s 
+language python
+runtime_version = '%s'
+handler = '%s'
+%s
+%s
+execute as %s
+AS 
+$$
+%s
+$$
+;
+SQL;
+
+        return sprintf(
+            $sql,
+            $procedure['is_secure'] === 'Y' ? 'SECURE' : '',
+            Helper::quoteIdentifier($procedure['name']),
+            $procedureParams['signature'],
+            $procedureParams['returns'],
+            $procedureParams['runtime_version'],
+            $procedureParams['handler'],
+            $procedureParams['packages'] !== '[]' ?
+                'PACKAGES = (' . substr($procedureParams['packages'], 1, -1) . ')' :
+                '',
+            $procedureParams['imports'] !== '[]' ?
+                'IMPORTS = (' . substr($procedureParams['imports'], 1, -1) . ')' :
+                '',
+            $procedureParams['execute as'],
+            trim($procedureParams['body'])
+        );
     }
 }
