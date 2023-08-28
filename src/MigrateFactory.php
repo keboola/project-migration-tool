@@ -53,7 +53,7 @@ class MigrateFactory
         $this->targetConnection->useRole($config->getTargetSnowflakeRole());
     }
 
-    public function createCleanupClass(): Cleanup
+    public function createCleanup(): Cleanup
     {
         return new Cleanup(
             $this->config,
@@ -62,7 +62,7 @@ class MigrateFactory
         );
     }
 
-    public function createPrepareMigrationClass(): PrepareMigration
+    public function createPrepareMigration(): PrepareMigration
     {
         return new PrepareMigration(
             $this->config->getDatabases(),
@@ -72,7 +72,7 @@ class MigrateFactory
         );
     }
 
-    public function createMetadataFetcherClass(): MetadataFetcher
+    public function createMetadataFetcher(): MetadataFetcher
     {
         return new MetadataFetcher(
             $this->sourceConnection,
@@ -80,7 +80,7 @@ class MigrateFactory
         );
     }
 
-    public function createMigrateStructureClass(): MigrateStructure
+    public function createMigrateStructure(): MigrateStructure
     {
         return new MigrateStructure(
             $this->sourceConnection,
@@ -93,7 +93,7 @@ class MigrateFactory
         );
     }
 
-    public function createMigrationCheckerClass(): MigrationChecker
+    public function createMigrationChecker(): MigrationChecker
     {
         return new MigrationChecker(
             $this->sourceConnection,

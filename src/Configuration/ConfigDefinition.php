@@ -60,9 +60,6 @@ class ConfigDefinition extends BaseConfigDefinition
                         ->booleanNode('dryPremigrationCleanupRun')->defaultTrue()->end()
                     ->end()
                 ->end()
-                ->arrayNode('passwordOfUsers')
-                    ->ignoreExtraKeys(false)
-                ->end()
             ->end()
         ;
         // @formatter:on

@@ -6,6 +6,8 @@ namespace ProjectMigrationTool;
 
 use Keboola\SnowflakeDbAdapter\QueryBuilder;
 use ProjectMigrationTool\Snowflake\Helper;
+use ProjectMigrationTool\ValueObject\GrantToRole;
+use ProjectMigrationTool\ValueObject\Role;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Process\Process;
 
@@ -21,14 +23,13 @@ class MigrationChecker
     ) {
     }
 
-    public function postMigrationCheckStructure(array $mainRoleWithGrants): void
+    public function postMigrationCheckStructure(Role $mainRoleWithGrants): void
     {
-        $warehouses = array_filter($mainRoleWithGrants['assignedGrants'], fn($v) => $v['granted_on'] === 'WAREHOUSE');
+        $warehouses = $mainRoleWithGrants->getAssignedGrants()->getWarehouseGrants();
 
-        $useWarehouse = sprintf(
-            'USE WAREHOUSE %s',
-            Helper::quoteIdentifier(current($warehouses)['name'])
-        );
+        assert(count($warehouses) > 0);
+        $useWarehouse = sprintf('USE WAREHOUSE %s', Helper::quoteIdentifier(current($warehouses)->getName()));
+
         $this->sourceConnection->query($useWarehouse);
         $this->destinationConnection->query($useWarehouse);
 
@@ -45,7 +46,7 @@ class MigrationChecker
 
             $compares = [];
             // phpcs:disable Generic.Files.LineLength
-//            Compare TABLES
+            // Compare TABLES
             $compares[] = [
                 'group' => 'Tables',
                 'itemNameKey' => 'TABLE_NAME',
@@ -64,7 +65,7 @@ class MigrationChecker
                 ),
             ];
 
-//            Compare USERS
+            // Compare USERS
             $compares[] = [
                 'group' => 'Users',
                 'itemNameKey' => 'NAME',
@@ -87,7 +88,7 @@ class MigrationChecker
                 ),
             ];
 
-//            Compare GRANTS TO USERS
+            // Compare GRANTS TO USERS
             $compares[] = [
                 'group' => 'Grants to user',
                 'itemNameKey' => 'ROLE',
@@ -104,7 +105,7 @@ class MigrationChecker
                 ),
             ];
 
-//            Compare ROLES
+            // Compare ROLES
             $compares[] = [
                 'group' => 'Roles',
                 'itemNameKey' => 'NAME',
@@ -120,7 +121,7 @@ class MigrationChecker
                 ),
             ];
 
-//            Compare GRANTS TO ROLES
+            // Compare GRANTS TO ROLES
             $compares[] = [
                 'group' => 'Grants to roles',
                 'itemNameKey' => 'ID',
@@ -149,7 +150,7 @@ class MigrationChecker
         }
     }
 
-    public function postMigrationCheckData(array $mainRoleWithGrants): void
+    public function postMigrationCheckData(Role $mainRoleWithGrants): void
     {
         $sourceRegion = $this->sourceConnection->fetchAll(sprintf(
             'SHOW regions LIKE %s',
@@ -172,15 +173,19 @@ class MigrationChecker
             $targetRegion[0]['region']
         );
 
+        /** @var GrantToRole[] $warehousesGrant */
         $warehousesGrant = array_values(array_filter(
-            $mainRoleWithGrants['assignedGrants'],
-            fn($v) => $v['granted_on'] === 'WAREHOUSE' && $v['privilege'] === 'USAGE'
+            $mainRoleWithGrants->getAssignedGrants()->getWarehouseGrants(),
+            fn($v) => $v->getPrivilege() === 'USAGE'
         ));
         assert(count($warehousesGrant) > 0);
-        $this->sourceConnection->grantRoleToUser($this->config->getSourceSnowflakeUser(), $mainRoleWithGrants['name']);
+        $this->sourceConnection->grantRoleToUser(
+            $this->config->getSourceSnowflakeUser(),
+            $mainRoleWithGrants->getName()
+        );
         $this->destinationConnection->grantRoleToUser(
             $this->config->getTargetSnowflakeUser(),
-            $mainRoleWithGrants['name']
+            $mainRoleWithGrants->getName()
         );
 
         foreach ($this->config->getDatabases() as $database) {
@@ -192,8 +197,8 @@ class MigrationChecker
                 if (in_array($schema['name'], ['INFORMATION_SCHEMA', 'PUBLIC'])) {
                     continue;
                 }
-                $this->sourceConnection->useRole($mainRoleWithGrants['name']);
-                $this->destinationConnection->useRole($mainRoleWithGrants['name']);
+                $this->sourceConnection->useRole($mainRoleWithGrants->getName());
+                $this->destinationConnection->useRole($mainRoleWithGrants->getName());
                 $this->sourceConnection->grantRoleToUser($this->config->getSourceSnowflakeUser(), $schema['owner']);
                 $this->destinationConnection->grantRoleToUser(
                     $this->config->getTargetSnowflakeUser(),
@@ -242,7 +247,7 @@ class MigrationChecker
                         'targetUser' => $this->config->getTargetSnowflakeUser(),
                         'targetPassword' => $this->config->getTargetSnowflakePassword(),
                         'role' => $schema['owner'],
-                        'warehouse' => $warehousesGrant[0]['name'],
+                        'warehouse' => $warehousesGrant[0]->getName(),
                         'database' => $database,
                         'schema' => $schema['name'],
                         'table' => $table['name'],
@@ -363,14 +368,17 @@ class MigrationChecker
 
     private function listRolesAndUsers(string $role): array
     {
-        $grants = $this->destinationConnection->fetchAll(sprintf(
-            'SHOW GRANTS TO ROLE %s',
-            Helper::quoteIdentifier($role)
-        ));
+        $grants = array_map(
+            fn(array $grant) => GrantToRole::fromArray($grant),
+            $this->destinationConnection->fetchAll(sprintf(
+                'SHOW GRANTS TO ROLE %s',
+                Helper::quoteIdentifier($role)
+            ))
+        );
 
         $filteredGrants = array_filter(
             $grants,
-            fn($v) => $v['privilege'] === 'OWNERSHIP' && (in_array($v['granted_on'], ['USER', 'ROLE']))
+            fn($v) => $v->getPrivilege() === 'OWNERSHIP' && (in_array($v->getGrantedOn(), ['USER', 'ROLE']))
         );
 
         $tmp = [
@@ -378,13 +386,13 @@ class MigrationChecker
             'roles' => [],
         ];
         foreach ($filteredGrants as $filteredGrant) {
-            switch ($filteredGrant['granted_on']) {
+            switch ($filteredGrant->getGrantedOn()) {
                 case 'USER':
-                    $tmp['users'][] = $filteredGrant['name'];
+                    $tmp['users'][] = $filteredGrant->getName();
                     break;
                 case 'ROLE':
-                    $tmp['roles'][] = $filteredGrant['name'];
-                    $childRoles = $this->listRolesAndUsers($filteredGrant['name']);
+                    $tmp['roles'][] = $filteredGrant->getName();
+                    $childRoles = $this->listRolesAndUsers($filteredGrant->getName());
                     $tmp = array_merge_recursive($tmp, $childRoles);
                     break;
             }

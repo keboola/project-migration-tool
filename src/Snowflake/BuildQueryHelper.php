@@ -8,8 +8,7 @@ use Keboola\SnowflakeDbAdapter\QueryBuilder;
 
 class BuildQueryHelper
 {
-
-    public static function buildSqlFunctionQuery(array $function, array $functionParams): string
+    public static function functionSql(array $function, array $functionParams): string
     {
         $sql = <<<SQL
 CREATE %s FUNCTION %s%s
@@ -31,7 +30,7 @@ SQL;
         );
     }
 
-    public static function buildPythonFunctionQuery(array $function, array $functionParams): string
+    public static function functionPython(array $function, array $functionParams): string
     {
         $python = <<<SQL
 CREATE FUNCTION %s%s
@@ -65,7 +64,7 @@ SQL;
         );
     }
 
-    public static function buildSqlProcedureQuery(array $procedure, array $procedureParams): string
+    public static function procedureSql(array $procedure, array $procedureParams): string
     {
         $sql = <<<SQL
 CREATE %s PROCEDURE %s%s
@@ -88,7 +87,7 @@ SQL;
         );
     }
 
-    public static function buildJavaProcedureQuery(array $procedure, array $procedureParams): string
+    public static function procedureJava(array $procedure, array $procedureParams): string
     {
         $sql = <<<SQL
 CREATE %s PROCEDURE %s%s
@@ -125,7 +124,7 @@ SQL;
         );
     }
 
-    public static function buildJavascriptProcedureQuery(array $procedure, array $procedureParams): string
+    public static function procedureJavaScript(array $procedure, array $procedureParams): string
     {
         $sql = <<<SQL
 CREATE %s PROCEDURE %s%s
@@ -150,7 +149,7 @@ SQL;
         );
     }
 
-    public static function buildPythonProcedureQuery(array $procedure, array $procedureParams): string
+    public static function procedurePython(array $procedure, array $procedureParams): string
     {
         $sql = <<<SQL
 CREATE %s PROCEDURE %s%s

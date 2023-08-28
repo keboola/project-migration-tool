@@ -28,7 +28,7 @@ class PrepareMigration
             throw new UserException('Migration connection is not set');
         }
         foreach ($this->databases as $database) {
-            //            Allow replication on source database
+            // Allow replication on source database
             $this->sourceConnection->query(sprintf(
                 'ALTER DATABASE %s ENABLE REPLICATION TO ACCOUNTS %s.%s;',
                 Helper::quoteIdentifier($database),
@@ -37,10 +37,10 @@ class PrepareMigration
             ));
             $this->sourceConnection->useRole($this->sourceConnection->getOwnershipRoleOnDatabase($database));
 
-            //            Waiting for previous SQL query
+            // Waiting for previous SQL query
             sleep(1);
 
-            //            Migration database sqls
+            // Migration database sqls
             $this->migrateConnection->query(sprintf(
                 'CREATE DATABASE IF NOT EXISTS %s AS REPLICA OF %s.%s.%s;',
                 Helper::quoteIdentifier($database),
@@ -56,7 +56,7 @@ class PrepareMigration
 
             $this->migrateConnection->query('USE SCHEMA PUBLIC');
 
-            //            Create and use warehouse for replicate data
+            // Create and use warehouse for replicate data
             $sql = <<<SQL
 CREATE WAREHOUSE IF NOT EXISTS "migrate"
     WITH WAREHOUSE_SIZE = 'Small'
@@ -66,10 +66,9 @@ CREATE WAREHOUSE IF NOT EXISTS "migrate"
 ;
 SQL;
             $this->migrateConnection->query($sql);
-
             $this->migrateConnection->query('USE WAREHOUSE "migrate";');
 
-            //            Run replicate of data
+            // Run replicate of data
             $this->migrateConnection->query(sprintf(
                 'ALTER DATABASE %s REFRESH',
                 Helper::quoteIdentifier($database)

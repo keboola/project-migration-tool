@@ -10,6 +10,8 @@ use Keboola\SnowflakeDbAdapter\QueryBuilder;
 use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Snowflake\Connection;
 use ProjectMigrationTool\Snowflake\Helper;
+use ProjectMigrationTool\ValueObject\FutureGrantToRole;
+use ProjectMigrationTool\ValueObject\GrantToUser;
 use Psr\Log\LoggerInterface;
 
 class Cleanup
@@ -68,16 +70,21 @@ class Cleanup
                     Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
                 ));
                 $this->destinationConnection->useRole($role['granted_by']);
-                $futureGrants = $this->destinationConnection->fetchAll(sprintf(
-                    'SHOW FUTURE GRANTS TO ROLE %s',
-                    $role['name']
-                ));
+
+                /** @var FutureGrantToRole[] $futureGrants */
+                $futureGrants = array_map(
+                    fn(array $v) => FutureGrantToRole::fromArray($v),
+                    $this->destinationConnection->fetchAll(sprintf(
+                        'SHOW FUTURE GRANTS TO ROLE %s',
+                        $role['name']
+                    ))
+                );
                 foreach ($futureGrants as $futureGrant) {
                     $sqls[] = sprintf(
                         'REVOKE %s ON FUTURE TABLES IN SCHEMA %s FROM ROLE %s;',
-                        $futureGrant['privilege'],
-                        Helper::removeStringFromEnd($futureGrant['name'], '.<TABLE>'),
-                        Helper::quoteIdentifier($futureGrant['grantee_name']),
+                        $futureGrant->getPrivilege(),
+                        $futureGrant->getName(),
+                        Helper::quoteIdentifier($futureGrant->getGranteeName()),
                     );
                 }
                 $sqls[] = sprintf('DROP ROLE IF EXISTS %s;', Helper::quoteIdentifier($role['name']));
@@ -92,6 +99,10 @@ class Cleanup
             $grantOfRole = current($filteredGrantsOfRole);
             if ($grantOfRole['granted_by'] !== $currentRole) {
                 $currentRole = $grantOfRole['granted_by'];
+                $sqls[] = sprintf(
+                    'USE ROLE %s;',
+                    Helper::quoteIdentifier($this->config->getTargetSnowflakeRole())
+                );
                 $sqls[] = sprintf(
                     'GRANT ROLE %s TO USER %s;',
                     Helper::quoteIdentifier($currentRole),
@@ -118,6 +129,7 @@ class Cleanup
             );
         }
 
+        $this->destinationConnection->useRole($mainRoleName);
         foreach ($sqls as $sql) {
             if ($this->config->getSynchronizeDryPremigrationCleanupRun()) {
                 $this->logger->info($sql);
@@ -134,7 +146,6 @@ class Cleanup
             Helper::quoteIdentifier($this->config->getTargetSnowflakeRole())
         ));
     }
-
 
     public function postMigration(): void
     {
@@ -157,25 +168,29 @@ class Cleanup
                 ));
             }
 
-            $userRoles = $this->destinationConnection->fetchAll(sprintf(
-                'SHOW GRANTS TO USER %s',
-                Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
-            ));
+            /** @var GrantToUser[] $userRoles */
+            $userRoles = array_map(
+                fn(array $v) => GrantToUser::fromArray($v),
+                $this->destinationConnection->fetchAll(sprintf(
+                    'SHOW GRANTS TO USER %s',
+                    Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
+                ))
+            );
 
             foreach (array_reverse($userRoles) as $userRole) {
-                if ($userRole['role'] === $this->config->getTargetSnowflakeRole()) {
+                if ($userRole->getRole() === $this->config->getTargetSnowflakeRole()) {
                     continue;
                 }
                 try {
-                    if ($userRole['granted_by']) {
-                        $this->destinationConnection->useRole($userRole['granted_by']);
+                    if ($userRole->getGrantedBy()) {
+                        $this->destinationConnection->useRole($userRole->getGrantedBy());
                     } else {
                         $this->destinationConnection->useRole($this->config->getTargetSnowflakeRole());
                     }
                     $this->destinationConnection->query(sprintf(
                         'REVOKE ROLE %s FROM USER %s',
-                        Helper::quoteIdentifier($userRole['role']),
-                        Helper::quoteIdentifier($userRole['grantee_name']),
+                        Helper::quoteIdentifier($userRole->getRole()),
+                        Helper::quoteIdentifier($userRole->getGranteeName()),
                     ));
                 } catch (RuntimeException $e) {
                     $this->logger->info(sprintf(
