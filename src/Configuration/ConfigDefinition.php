@@ -55,11 +55,8 @@ class ConfigDefinition extends BaseConfigDefinition
                 ->arrayNode('migrateDatabases')
                     ->scalarPrototype()->end()
                 ->end()
-                ->arrayNode('synchronize')
-                    ->children()
-                        ->booleanNode('dryPremigrationCleanupRun')->defaultTrue()->end()
-                    ->end()
-                ->end()
+                ->booleanNode('synchronize')->defaultFalse()->end()
+                ->booleanNode('dryPremigrationCleanupRun')->defaultTrue()->end()
             ->end()
         ;
         // @formatter:on
