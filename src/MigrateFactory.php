@@ -5,55 +5,102 @@ declare(strict_types=1);
 namespace ProjectMigrationTool;
 
 use ProjectMigrationTool\Configuration\Config;
+use ProjectMigrationTool\Snowflake\Connection;
 use ProjectMigrationTool\Snowflake\ConnectionFactory;
 use Psr\Log\LoggerInterface;
 
 class MigrateFactory
 {
-    public static function create(LoggerInterface $logger, Config $config): Migrate
+    private Connection $sourceConnection;
+
+    private ?Connection $migrateConnection;
+
+    private Connection $targetConnection;
+
+    public function __construct(readonly LoggerInterface $logger, readonly Config $config)
     {
-        //        Create database connections
+        // Create database connections
         $logger->info('Connecting to databases.');
-        $sourceSnflkConnection = ConnectionFactory::create(
+        $this->sourceConnection = ConnectionFactory::create(
             $config->getSourceSnowflakeHost(),
             $config->getSourceSnowflakeUser(),
             $config->getSourceSnowflakePassword(),
             $config->getSourceSnowflakeWarehouse(),
             $config->getSourceSnowflakeRole(),
-            $logger
+            $logger,
         );
-        $sourceSnflkConnection->useRole($config->getSourceSnowflakeRole());
+        $this->sourceConnection->useRole($config->getSourceSnowflakeRole());
 
         if ($config->hasMigrateAccount()) {
-            $migrateSnflkConnection = ConnectionFactory::create(
+            $this->migrateConnection = ConnectionFactory::create(
                 $config->getMigrationSnowflakeHost(),
                 $config->getMigrationSnowflakeUser(),
                 $config->getMigrationSnowflakePassword(),
                 $config->getMigrationSnowflakeWarehouse(),
                 $config->getMigrationSnowflakeRole(),
-                $logger
+                $logger,
             );
-            $migrateSnflkConnection->useRole($config->getMigrationSnowflakeRole());
+            $this->migrateConnection->useRole($config->getMigrationSnowflakeRole());
         }
-        $destinationSnflkConnection = ConnectionFactory::create(
+        $this->targetConnection = ConnectionFactory::create(
             $config->getTargetSnowflakeHost(),
             $config->getTargetSnowflakeUser(),
             $config->getTargetSnowflakePassword(),
             $config->getTargetSnowflakeWarehouse(),
             $config->getTargetSnowflakeRole(),
-            $logger
-        );
-        $destinationSnflkConnection->useRole($config->getTargetSnowflakeRole());
-
-        return new Migrate(
             $logger,
-            $config,
-            $sourceSnflkConnection,
-            $migrateSnflkConnection ?? null,
-            $destinationSnflkConnection,
-            $config->getDatabases(),
-            $config->getSourceSnowflakeRole(),
-            $config->getTargetSnowflakeRole()
+        );
+        $this->targetConnection->useRole($config->getTargetSnowflakeRole());
+    }
+
+    public function createCleanup(): Cleanup
+    {
+        return new Cleanup(
+            $this->config,
+            $this->targetConnection,
+            $this->logger,
+        );
+    }
+
+    public function createPrepareMigration(): PrepareMigration
+    {
+        return new PrepareMigration(
+            $this->config->getDatabases(),
+            $this->sourceConnection,
+            $this->targetConnection,
+            $this->migrateConnection ?? null,
+        );
+    }
+
+    public function createMetadataFetcher(): MetadataFetcher
+    {
+        return new MetadataFetcher(
+            $this->sourceConnection,
+            $this->config->getDatabases(),
+        );
+    }
+
+    public function createMigrateStructure(): MigrateStructure
+    {
+        return new MigrateStructure(
+            $this->sourceConnection,
+            $this->targetConnection,
+            $this->logger,
+            $this->config,
+            $this->config->getSourceSnowflakeRole(),
+            $this->config->getTargetSnowflakeRole(),
+            $this->config->getDatabases(),
+        );
+    }
+
+    public function createMigrationChecker(): MigrationChecker
+    {
+        return new MigrationChecker(
+            $this->sourceConnection,
+            $this->targetConnection,
+            $this->config,
+            $this->logger,
+            $this->config->getDatabases(),
         );
     }
 }

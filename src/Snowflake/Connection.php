@@ -7,6 +7,8 @@ namespace ProjectMigrationTool\Snowflake;
 use Keboola\Component\UserException;
 use Keboola\SnowflakeDbAdapter\Connection as AdapterConnection;
 use ProjectMigrationTool\Exception\NoWarehouseException;
+use ProjectMigrationTool\ValueObject\FutureGrantToRole;
+use ProjectMigrationTool\ValueObject\GrantToRole;
 use Psr\Log\LoggerInterface;
 use Throwable;
 
@@ -97,17 +99,17 @@ class Connection extends AdapterConnection
         return $role[0]['role'];
     }
 
-    public function createRole(array $role, string $userToGrantRoleTo): void
+    public function createRole(GrantToRole $grant, string $userToGrantRoleTo): void
     {
-        assert($role['privilege'] === 'OWNERSHIP');
+        assert($grant->getPrivilege() === 'OWNERSHIP');
 
-        if (isset($role['granted_by'])) {
-            $this->useRole($role['granted_by']);
+        if (!empty($grant->getGrantedBy())) {
+            $this->useRole($grant->getGrantedBy());
         }
 
-        $this->query(sprintf('CREATE ROLE IF NOT EXISTS %s', Helper::quoteIdentifier($role['name'])));
+        $this->query(sprintf('CREATE ROLE IF NOT EXISTS %s', Helper::quoteIdentifier($grant->getName())));
 
-        $this->grantRoleToUser($userToGrantRoleTo, $role['name']);
+        $this->grantRoleToUser($userToGrantRoleTo, $grant->getName());
     }
 
     public function grantRoleToUser(string $user, string $role): void
@@ -119,41 +121,42 @@ class Connection extends AdapterConnection
         ));
     }
 
-    public function assignGrantToRole(array $grant): void
+    public function assignGrantToRole(GrantToRole $grant): void
     {
-        if ($grant['granted_on'] === 'SCHEMA' &&
-            ($grant['privilege'] === 'CREATE BUDGET' ||  $grant['privilege'] === 'CREATE ANOMALY_DETECTION')) {
+        if ($grant->getGrantedOn() === 'SCHEMA' &&
+            (in_array($grant->getPrivilege(), ['CREATE BUDGET', 'CREATE ANOMALY_DETECTION', 'CREATE FORECAST']))) {
             // CREATE BUDGET is not supported in Snowflake
             // CREATE ANOMALY_DETECTION likewise
+            // CREATE FORECAST likewise
             return;
         }
 
-        $this->useRole($grant['granted_by']);
+        $this->useRole($grant->getGrantedBy());
 
         $isWarehouseGrant = false;
-        if ($grant['privilege'] === 'USAGE' && $grant['granted_on'] === 'WAREHOUSE') {
-            $this->roleWarehouses[$grant['grantee_name']][] = $grant['name'];
+        if ($grant->getPrivilege() === 'USAGE' && $grant->getGrantedOn() === 'WAREHOUSE') {
+            $this->roleWarehouses[$grant->getGranteeName()][] = $grant->getName();
             $isWarehouseGrant = true;
         }
 
-        if ($grant['privilege'] === 'USAGE' && $grant['granted_on'] === 'ROLE') {
+        if ($grant->getPrivilege() === 'USAGE' && $grant->getGrantedOn() === 'ROLE') {
             $query = sprintf(
                 'GRANT %s %s TO %s %s %s',
-                $grant['granted_on'],
-                $grant['name'],
-                $grant['granted_to'],
-                Helper::quoteIdentifier($grant['grantee_name']),
-                $grant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
+                $grant->getGrantedOn(),
+                $grant->getName(),
+                $grant->getGrantedTo(),
+                Helper::quoteIdentifier($grant->getGranteeName()),
+                $grant->getGrantOption() === 'true' ? 'WITH GRANT OPTION' : '',
             );
         } else {
             $query = sprintf(
                 'GRANT %s ON %s %s TO %s %s %s',
-                $grant['privilege'],
-                $grant['granted_on'],
-                $grant['granted_on'] !== 'ACCOUNT' ? $grant['name'] : '',
-                $grant['granted_to'],
-                Helper::quoteIdentifier($grant['grantee_name']),
-                $grant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
+                $grant->getPrivilege(),
+                $grant->getGrantedOn(),
+                $grant->getGrantedOn() !== 'ACCOUNT' ? $grant->getName() : '',
+                $grant->getGrantedTo(),
+                Helper::quoteIdentifier($grant->getGranteeName()),
+                $grant->getGrantOption() === 'true' ? 'WITH GRANT OPTION' : '',
             );
         }
 
@@ -161,7 +164,7 @@ class Connection extends AdapterConnection
             $this->query($query);
         } catch (Throwable $e) {
             if (!$isWarehouseGrant || $this->logger === null) {
-                if (in_array($grant['granted_on'], ['DATABASE', 'SCHEMA'])) {
+                if (in_array($grant->getGrantedOn(), ['DATABASE', 'SCHEMA'])) {
                     $this->failedGrants[] = $grant;
                 } else {
                     throw $e;
@@ -170,39 +173,43 @@ class Connection extends AdapterConnection
             $this->logger?->info(sprintf(
                 'Warning: Failed grant query "%s" with role "%s"',
                 $query,
-                $grant['granted_by']
+                $grant->getGrantedBy()
             ));
         }
     }
 
-    public function assignFutureGrantToRole(array $schemaFutureGrant): void
+    public function assignFutureGrantToRole(FutureGrantToRole $schemaFutureGrant): void
     {
-        switch ($schemaFutureGrant['grant_on']) {
+        switch ($schemaFutureGrant->getGrantOn()) {
             case 'TABLE':
                 $this->query(sprintf(
                     'GRANT %s ON FUTURE TABLES IN SCHEMA %s TO ROLE %s %s',
-                    $schemaFutureGrant['privilege'],
-                    $schemaFutureGrant['name'],
-                    Helper::quoteIdentifier($schemaFutureGrant['grantee_name']),
-                    $schemaFutureGrant['grant_option'] === 'true' ? 'WITH GRANT OPTION' : '',
+                    $schemaFutureGrant->getPrivilege(),
+                    $schemaFutureGrant->getName(),
+                    Helper::quoteIdentifier($schemaFutureGrant->getGranteeName()),
+                    $schemaFutureGrant->getGrantOption() === 'true' ? 'WITH GRANT OPTION' : '',
                 ));
                 break;
             default:
-                throw new UserException('Unknown future grant on ' . $schemaFutureGrant['grant_on']);
+                throw new UserException('Unknown future grant on ' . $schemaFutureGrant->getGrantOn());
         }
     }
 
     public function getOwnershipRoleOnDatabase(string $database): string
     {
-        $grantsOnDatabase = $this->fetchAll(sprintf(
-            'SHOW GRANTS ON DATABASE %s;',
-            Helper::quoteIdentifier($database)
-        ));
+        /** @var GrantToRole[] $grantsOnDatabase */
+        $grantsOnDatabase = array_map(
+            fn(array $grant) => GrantToRole::fromArray($grant),
+            $this->fetchAll(sprintf(
+                'SHOW GRANTS ON DATABASE %s;',
+                Helper::quoteIdentifier($database)
+            ))
+        );
 
-        $ownershipOnDatabase = array_filter($grantsOnDatabase, fn($v) => $v['privilege'] === 'OWNERSHIP');
+        $ownershipOnDatabase = array_filter($grantsOnDatabase, fn($v) => $v->getPrivilege() === 'OWNERSHIP');
         assert(count($ownershipOnDatabase) === 1);
 
-        return current($ownershipOnDatabase)['grantee_name'];
+        return current($ownershipOnDatabase)->getGranteeName();
     }
 
     public function getFailedGrants(): array

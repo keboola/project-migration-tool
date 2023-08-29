@@ -15,80 +15,86 @@ class Component extends BaseComponent
 
     protected function run(): void
     {
-        $migrate = MigrateFactory::create($this->getLogger(), $this->getConfig());
-
         switch ($this->getConfig()->getRunAction()) {
             case Config::ACTION_RUN:
-                $this->runMigrateData($migrate);
+                $this->runMigrateData();
                 break;
             case self::ACTION_CHECK_MIGRATED_DATA:
-                $this->runCheckMigratedData($migrate);
+                $this->runCheckMigratedData();
                 break;
             default:
                 throw new Exception(sprintf('Action "%s" is not supported.', $this->getConfig()->getAction()));
         }
     }
 
-    private function runMigrateData(Migrate $migrate): void
+    private function runMigrateData(): void
     {
-        //        Get main role
-        $this->getLogger()->info('Getting main role with grants');
-        $mainRoleWithGrants = $migrate->getMainRoleWithGrants();
+        $migrateFactory = new MigrateFactory($this->getLogger(), $this->getConfig());
 
-        //        Cleanup destination account
+        $cleanup = $migrateFactory->createCleanup();
+        $prepareMigration = $migrateFactory->createPrepareMigration();
+        $metadataFetcher = $migrateFactory->createMetadataFetcher();
+        $migrateStructure = $migrateFactory->createMigrateStructure();
+
+        // Get main role
+        $this->getLogger()->info('Getting main role with grants');
+        $mainRoleWithGrants = $metadataFetcher->getMainRoleWithGrants();
+
+        // Cleanup destination account
         if ($this->getConfig()->getSynchronizeRun()) {
             $this->getLogger()->info('Pre-migration cleanup.');
-            $migrate->cleanupAccount(
-                $mainRoleWithGrants['name'],
-                $this->getConfig()->getSynchronizeDryPremigrationCleanupRun()
-            );
+            $cleanup->preMigration($mainRoleWithGrants->getName());
         }
 
-        //        Create DB replication
-        $this->getLogger()->info('Creating replication.');
-        $migrate->createReplication();
-
-        //        Create DB sharing
-        $this->getLogger()->info('Creating DB sharing.');
-        $migrate->createShare();
-
-        //        Export grants from source database
+        // Export grants from source database
         $this->getLogger()->info('Exporting grants of roles.');
-        $rolesGrants = $migrate->exportRolesGrants();
+        $roles = $metadataFetcher->getRolesWithGrants();
 
-        //        Create MainRole in target snflk account
-        $this->getLogger()->info('Creating main role in target account.');
-        $migrate->createMainRole($mainRoleWithGrants, $this->getConfig()->getPasswordOfUsers());
+        // Create DB replication
+        $this->getLogger()->info('Creating replication.');
+        $prepareMigration->createReplication();
 
-        //        create and clone databases from shares
+        // Create DB sharing
+        $this->getLogger()->info('Creating DB sharing.');
+        $prepareMigration->createShare();
+
+        // Create and clone databases from shares
         $this->getLogger()->info('Creating shares databases.');
-        $migrate->createDatabasesFromShares();
+        $prepareMigration->createDatabasesFromShares();
+
+        // Create MainRole in target snflk account
+        $this->getLogger()->info('Creating main role in target account.');
+        $migrateStructure->createMainRole($mainRoleWithGrants);
 
         $this->getLogger()->info('Migrating warehouses/users/roles with grants');
-        $migrate->migrateUsersRolesAndGrants($mainRoleWithGrants['name'], $rolesGrants);
+        $migrateStructure->migrateUsersRolesAndGrants($mainRoleWithGrants, $roles);
 
-        $migrate->grantRoleToUsers();
+        $migrateStructure->grantRoleToUsers();
 
         $this->getLogger()->info('Cloning databases with grants.');
-        $migrate->cloneDatabaseWithGrants($mainRoleWithGrants['name'], $rolesGrants);
+        $migrateStructure->cloneDatabaseWithGrants($mainRoleWithGrants, $roles);
 
         $this->getLogger()->info('Re-applying failed grants.');
-        $migrate->reApplyFailedGrants();
+        $migrateStructure->reApplyFailedGrants();
+
+        $migrateStructure->printUnusedGrants($roles);
 
         $this->getLogger()->info('Post-migration cleanup.');
-        $migrate->postMigrationCleanup();
-
-        $migrate->printUnusedGrants($rolesGrants);
+        $cleanup->postMigration();
     }
 
-    private function runCheckMigratedData(Migrate $migrate): void
+    private function runCheckMigratedData(): void
     {
+        $migrateFactory = new MigrateFactory($this->getLogger(), $this->getConfig());
+        $metadataFetcher = $migrateFactory->createMetadataFetcher();
+        $migrationChecker = $migrateFactory->createMigrationChecker();
+
         $this->getLogger()->info('Getting main role with grants');
-        $mainRoleWithGrants = $migrate->getMainRoleWithGrants();
+        $mainRoleWithGrants = $metadataFetcher->getMainRoleWithGrants();
 
         $this->getLogger()->info('Checking data.');
-        $migrate->postMigrationCheckStructure($mainRoleWithGrants);
-//        $migrate->postMigrationCheckData($mainRoleWithGrants);
+        $migrationChecker->postMigrationCheckStructure($mainRoleWithGrants);
+//        $migrationChecker->postMigrationCheckData($mainRoleWithGrants);
     }
 
     public function getConfig(): Config

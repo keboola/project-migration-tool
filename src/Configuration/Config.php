@@ -22,11 +22,6 @@ class Config extends BaseConfig
         return $this->getArrayValue(['parameters', 'migrateDatabases']);
     }
 
-    public function getPasswordOfUsers(): array
-    {
-        return $this->getArrayValue(['parameters', 'passwordOfUsers'], []);
-    }
-
     public function getSynchronizeRun(): bool
     {
         return is_array($this->getValue(['parameters', 'synchronize'], false));
