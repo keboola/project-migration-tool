@@ -11,15 +11,19 @@ use ProjectMigrationTool\Configuration\ConfigDefinition;
 
 class Component extends BaseComponent
 {
-    private const ACTION_CHECK_MIGRATED_DATA = 'runCheckMigratedData';
-
     protected function run(): void
     {
         switch ($this->getConfig()->getRunAction()) {
-            case Config::ACTION_RUN:
+            case Config::ACTION_MIGRATE_STRUCTURE:
+                $this->runMigrateStructure();
+                break;
+            case Config::ACTION_MIGRATE_DATA:
                 $this->runMigrateData();
                 break;
-            case self::ACTION_CHECK_MIGRATED_DATA:
+            case Config::ACTION_CLEANUP:
+                $this->runCleanup();
+                break;
+            case Config::ACTION_CHECK:
                 $this->runCheckMigratedData();
                 break;
             default:
@@ -27,7 +31,7 @@ class Component extends BaseComponent
         }
     }
 
-    private function runMigrateData(): void
+    private function runMigrateStructure(): void
     {
         $migrateFactory = new MigrateFactory($this->getLogger(), $this->getConfig());
 
@@ -41,7 +45,7 @@ class Component extends BaseComponent
         $mainRoleWithGrants = $metadataFetcher->getMainRoleWithGrants();
 
         // Cleanup destination account
-        if ($this->getConfig()->getSynchronizeRun()) {
+        if ($this->getConfig()->isSynchronizeRun()) {
             $this->getLogger()->info('Pre-migration cleanup.');
             $cleanup->preMigration($mainRoleWithGrants->getName());
         }
@@ -78,6 +82,26 @@ class Component extends BaseComponent
         $migrateStructure->reApplyFailedGrants();
 
         $migrateStructure->printUnusedGrants($roles);
+    }
+
+    private function runMigrateData(): void
+    {
+        $migrateFactory = new MigrateFactory($this->getLogger(), $this->getConfig());
+
+        $metadataFetcher = $migrateFactory->createMetadataFetcher();
+        $migrateData = $migrateFactory->createMigrateData();
+
+        $mainRole = $metadataFetcher->getMainRoleWithGrants();
+        $roles = $metadataFetcher->getRolesWithGrants();
+
+        $migrateData->migrate($mainRole, $roles);
+    }
+
+    private function runCleanup(): void
+    {
+        $migrateFactory = new MigrateFactory($this->getLogger(), $this->getConfig());
+
+        $cleanup = $migrateFactory->createCleanup();
 
         $this->getLogger()->info('Post-migration cleanup.');
         $cleanup->postMigration();

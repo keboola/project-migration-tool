@@ -24,8 +24,6 @@ class Connection extends AdapterConnection
 
     private ?LoggerInterface $logger;
 
-    private array $roleWarehouses = [];
-
     private array $failedGrants = [];
 
     public function __construct(array $options, string $defaultRole, ?LoggerInterface $logger = null)
@@ -56,18 +54,11 @@ class Connection extends AdapterConnection
         $this->actualRole = $roleName;
     }
 
-    public function useWarehouse(string $role): void
+    public function useWarehouse(string $warehouse): void
     {
-        if (empty($this->roleWarehouses[$role])) {
-            throw new NoWarehouseException(sprintf(
-                'The role "%s" cannot use any warehouses',
-                $role
-            ));
-        }
-
         $this->query(sprintf(
             'USE WAREHOUSE %s;',
-            Helper::quoteIdentifier(current($this->roleWarehouses[$role]))
+            Helper::quoteIdentifier($warehouse)
         ));
     }
 
@@ -135,7 +126,6 @@ class Connection extends AdapterConnection
 
         $isWarehouseGrant = false;
         if ($grant->getPrivilege() === 'USAGE' && $grant->getGrantedOn() === 'WAREHOUSE') {
-            $this->roleWarehouses[$grant->getGranteeName()][] = $grant->getName();
             $isWarehouseGrant = true;
         }
 

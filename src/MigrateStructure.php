@@ -52,7 +52,6 @@ class MigrateStructure
             $this->destinationConnection->useRole($mainRole->getName());
 
             $shareDbName = $database . '_SHARE';
-            $oldDbName = $database . '_OLD';
 
             $sourceDatabases = $this->sourceConnection->fetchAll(sprintf(
                 'SHOW DATABASES LIKE %s',
@@ -169,71 +168,27 @@ class MigrateStructure
                     $ownershipOnTable = current($ownershipOnTable);
 
                     $this->assignSharePrivilegesToRole($database, $ownershipOnTable->getGrantedBy());
-
                     $this->destinationConnection->useRole($ownershipOnTable->getGrantedBy());
-                    try {
-                        $this->destinationConnection->useWarehouse($ownershipOnTable->getGrantedBy());
-                    } catch (NoWarehouseException $exception) {
-                        if (!preg_match('/^(KEBOOLA|SAPI|sapi)_WORKSPACE_/', $ownershipOnTable->getGrantedBy())) {
-                            throw $exception;
-                        }
-                        $this->logger->info(sprintf(
-                            'Warning: Skipping table: %s, because: %s',
-                            $tableName,
-                            $exception->getMessage()
-                        ));
-                    }
 
-                    if ($this->canCloneTable($mainRole->getName(), $database, $schemaName, $tableName)) {
-                        $this->grantUsageToOldTable(
-                            $database,
-                            $schemaName,
-                            $tableName,
-                            $mainRole->getName(),
-                            $ownershipOnTable->getGrantedBy()
-                        );
-                        $this->logger->info(sprintf('Cloning table "%s" from OLD database', $tableName));
+                    $this->logger->info(sprintf('Creating table structure "%s"', $tableName));
+                    try {
                         $this->destinationConnection->query(sprintf(
-                            'CREATE TABLE %s.%s.%s CLONE %s.%s.%s;',
+                            'CREATE TABLE %s.%s.%s LIKE %s.%s.%s;',
                             Helper::quoteIdentifier($database),
                             Helper::quoteIdentifier($schemaName),
                             Helper::quoteIdentifier($tableName),
-                            Helper::quoteIdentifier($oldDbName),
+                            Helper::quoteIdentifier($shareDbName),
                             Helper::quoteIdentifier($schemaName),
                             Helper::quoteIdentifier($tableName),
                         ));
-                    } else {
-                        $this->logger->info(sprintf('Creating table "%s" from SHARE database', $tableName));
-
-                        try {
-                            $this->destinationConnection->query(sprintf(
-                                'CREATE TABLE %s.%s.%s LIKE %s.%s.%s;',
-                                Helper::quoteIdentifier($database),
-                                Helper::quoteIdentifier($schemaName),
-                                Helper::quoteIdentifier($tableName),
-                                Helper::quoteIdentifier($shareDbName),
-                                Helper::quoteIdentifier($schemaName),
-                                Helper::quoteIdentifier($tableName),
-                            ));
-
-                            $this->destinationConnection->query(sprintf(
-                                'INSERT INTO %s.%s.%s SELECT * FROM %s.%s.%s;',
-                                Helper::quoteIdentifier($database),
-                                Helper::quoteIdentifier($schemaName),
-                                Helper::quoteIdentifier($tableName),
-                                Helper::quoteIdentifier($shareDbName),
-                                Helper::quoteIdentifier($schemaName),
-                                Helper::quoteIdentifier($tableName),
-                            ));
-                        } catch (RuntimeException $e) {
-                            $this->logger->info(sprintf(
-                                'Warning: Skip creating table %s.%s.%s. Error: "%s".',
-                                Helper::quoteIdentifier($database),
-                                Helper::quoteIdentifier($schemaName),
-                                Helper::quoteIdentifier($tableName),
-                                $e->getMessage()
-                            ));
-                        }
+                    } catch (RuntimeException $e) {
+                        $this->logger->info(sprintf(
+                            'Warning: Skip creating table %s.%s.%s. Error: "%s".',
+                            Helper::quoteIdentifier($database),
+                            Helper::quoteIdentifier($schemaName),
+                            Helper::quoteIdentifier($tableName),
+                            $e->getMessage()
+                        ));
                     }
 
                     $tableGrants = array_filter($tableGrants, fn(GrantToRole $v) => $v->getPrivilege() !== 'OWNERSHIP');
@@ -243,13 +198,9 @@ class MigrateStructure
                 }
             }
 
-            $this->copyViews(
-                $database,
-                $projectRoles->getRole($databaseRoleName)->getName(),
-                $projectRoles->getViewGrantsFromAllRoles()
-            );
-            $this->copyFunctions($database, $projectRoles->getFunctionGrantsFromAllRoles());
-            $this->copyProcedures($database, $projectRoles->getProcedureGrantsFromAllRoles());
+            $this->copyViews($database, $databaseRoleName, $projectRoles);
+            $this->copyFunctions($database, $projectRoles);
+            $this->copyProcedures($database, $projectRoles);
         }
     }
 
@@ -567,82 +518,6 @@ SQL;
         ]));
     }
 
-    private function canCloneTable(string $mainRole, string $database, string $schema, string $table): bool
-    {
-
-        $sqlTemplate = 'SELECT max("_timestamp") as "maxTimestamp" FROM %s.%s.%s';
-
-        $currentRole = $this->destinationConnection->getCurrentRole();
-        try {
-            $this->destinationConnection->useRole($mainRole);
-
-            $lastUpdateTableInOldDatabase = $this->destinationConnection->fetchAll(sprintf(
-                $sqlTemplate,
-                Helper::quoteIdentifier($database . '_OLD'),
-                Helper::quoteIdentifier($schema),
-                Helper::quoteIdentifier($table)
-            ));
-
-            $this->destinationConnection->useRole($this->mainMigrationRoleTargetAccount);
-            $lastUpdateTableInShareDatabase = $this->destinationConnection->fetchAll(sprintf(
-                $sqlTemplate,
-                Helper::quoteIdentifier($database . '_SHARE'),
-                Helper::quoteIdentifier($schema),
-                Helper::quoteIdentifier($table)
-            ));
-        } catch (RuntimeException $e) {
-            return false;
-        } finally {
-            $this->destinationConnection->useRole($currentRole);
-        }
-
-        return $lastUpdateTableInOldDatabase[0]['maxTimestamp'] === $lastUpdateTableInShareDatabase[0]['maxTimestamp'];
-    }
-
-    private function grantUsageToOldTable(
-        string $database,
-        string $schema,
-        string $table,
-        string $mainRole,
-        string $role
-    ): void {
-        $currentRole = $this->destinationConnection->getCurrentRole();
-        $this->destinationConnection->useRole($mainRole);
-        $dbExists = $this->destinationConnection->fetchAll(sprintf(
-            'SHOW DATABASES LIKE %s',
-            QueryBuilder::quote($database . '_OLD')
-        ));
-        if (!$dbExists) {
-            return;
-        }
-
-        $sqls = [
-            sprintf(
-                'grant usage on database %s to role %s;',
-                Helper::quoteIdentifier($database . '_OLD'),
-                Helper::quoteIdentifier($role)
-            ),
-            sprintf(
-                'grant usage on schema %s.%s to role %s;',
-                Helper::quoteIdentifier($database . '_OLD'),
-                Helper::quoteIdentifier($schema),
-                Helper::quoteIdentifier($role)
-            ),
-            sprintf(
-                'grant select on table %s.%s.%s to role %s;',
-                Helper::quoteIdentifier($database . '_OLD'),
-                Helper::quoteIdentifier($schema),
-                Helper::quoteIdentifier($table),
-                Helper::quoteIdentifier($role)
-            ),
-        ];
-
-        foreach ($sqls as $sql) {
-            $this->destinationConnection->query($sql);
-        }
-        $this->destinationConnection->useRole($currentRole);
-    }
-
     /**
      * @param GrantToRole[] $grants
      */
@@ -653,11 +528,11 @@ SQL;
         array_walk($foreignGrants, fn($grant) => $this->destinationConnection->assignGrantToRole($grant));
     }
 
-    /**
-     * @param GrantToRole[] $viewsGrants
-     */
-    private function copyViews(string $database, string $databaseRole, array $viewsGrants): void
+    private function copyViews(string $database, string $databaseRoleName, ProjectRoles $projectRoles): void
     {
+        $databaseRole = $projectRoles->getRole($databaseRoleName)->getName();
+        $viewsGrants = $projectRoles->getViewGrantsFromAllRoles();
+
         $this->logger->info(sprintf('Cloning views from database "%s"', $database));
         $this->sourceConnection->grantRoleToUser($this->config->getSourceSnowflakeUser(), $databaseRole);
         $this->sourceConnection->useRole($databaseRole);
@@ -677,6 +552,11 @@ SQL;
                 ));
             }
             foreach ($views as $viewKey => $view) {
+                $ownershipRole = $projectRoles->getRole($view['owner']);
+                $warehouseGrants = $ownershipRole->getAssignedGrants()->getWarehouseGrants();
+                assert(count($warehouseGrants) > 0);
+
+                $this->destinationConnection->useWarehouse(current($warehouseGrants)->getName());
                 $this->destinationConnection->useRole($view['owner']);
 
                 $this->destinationConnection->query(sprintf(
@@ -709,11 +589,10 @@ SQL;
         }
     }
 
-    /**
-     * @param GrantToRole[] $functionsGrants
-     */
-    private function copyFunctions(string $database, array $functionsGrants): void
+    private function copyFunctions(string $database, ProjectRoles $projectRoles): void
     {
+        $functionsGrants = $projectRoles->getFunctionGrantsFromAllRoles();
+
         $this->logger->info(sprintf('Cloning functions from database "%s"', $database));
         $functions = $this->sourceConnection->fetchAll(sprintf(
             'SHOW FUNCTIONS IN DATABASE %s;',
@@ -759,8 +638,14 @@ SQL;
                 fn($v) => str_contains($v->getGrantedBy(), $function['schema_name'])
             );
             assert(count($ownership) >= 1);
+            $ownershipRole = current($ownership);
+            $warehouseGrants = $projectRoles
+                ->getRole($ownershipRole->getGrantedBy())
+                ->getAssignedGrants()
+                ->getWarehouseGrants();
+            $this->destinationConnection->useWarehouse(current($warehouseGrants)->getName());
 
-            $this->destinationConnection->useRole(current($ownership)->getGrantedBy());
+            $this->destinationConnection->useRole($ownershipRole->getGrantedBy());
 
             $this->destinationConnection->query(sprintf(
                 'USE SCHEMA %s.%s;',
@@ -789,11 +674,10 @@ SQL;
         }
     }
 
-    /**
-     * @param GrantToRole[] $proceduresGrants
-     */
-    private function copyProcedures(string $database, array $proceduresGrants): void
+    private function copyProcedures(string $database, ProjectRoles $projectRoles): void
     {
+        $proceduresGrants = $projectRoles->getProcedureGrantsFromAllRoles();
+
         $this->logger->info(sprintf('Cloning procedures from database "%s"', $database));
 
         $procedures = $this->sourceConnection->fetchAll(sprintf(
@@ -845,7 +729,11 @@ SQL;
                 fn($v) => str_contains($v->getGrantedBy(), $procedure['schema_name'])
             );
             assert(count($ownership) >= 1);
+            $ownershipRole = $projectRoles->getRole(current($ownership)->getGrantedBy());
+            $warehouseGrants = $ownershipRole->getAssignedGrants()->getWarehouseGrants();
+            assert(count($warehouseGrants) > 0);
 
+            $this->destinationConnection->useWarehouse(current($warehouseGrants)->getName());
             $this->destinationConnection->useRole(current($ownership)->getGrantedBy());
 
             $this->destinationConnection->query(sprintf(
