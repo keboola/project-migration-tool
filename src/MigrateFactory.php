@@ -93,6 +93,19 @@ class MigrateFactory
         );
     }
 
+    public function createMigrateData(): MigrateData
+    {
+        return new MigrateData(
+            $this->sourceConnection,
+            $this->targetConnection,
+            $this->logger,
+            $this->config,
+            $this->config->getSourceSnowflakeRole(),
+            $this->config->getTargetSnowflakeRole(),
+            $this->config->getDatabases(),
+        );
+    }
+
     public function createMigrationChecker(): MigrationChecker
     {
         return new MigrationChecker(

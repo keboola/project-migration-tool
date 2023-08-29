@@ -8,9 +8,13 @@ use Keboola\Component\Config\BaseConfig;
 
 class Config extends BaseConfig
 {
-    public const ACTION_RUN = 'run';
-
     public const ACTION_CHECK = 'runCheckMigratedData';
+
+    public const ACTION_MIGRATE_DATA = 'runMigrateData';
+
+    public const ACTION_MIGRATE_STRUCTURE = 'runMigrateStructure';
+
+    public const ACTION_CLEANUP = 'runCleanup';
 
     public function getRunAction(): string
     {
@@ -22,15 +26,17 @@ class Config extends BaseConfig
         return $this->getArrayValue(['parameters', 'migrateDatabases']);
     }
 
-    public function getSynchronizeRun(): bool
+    public function isSynchronizeRun(): bool
     {
-        return is_array($this->getValue(['parameters', 'synchronize'], false));
+        /** @var bool $value */
+        $value = $this->getValue(['parameters', 'synchronize'], false);
+        return $value;
     }
 
     public function getSynchronizeDryPremigrationCleanupRun(): bool
     {
         /** @var bool $value */
-        $value = $this->getValue(['parameters', 'synchronize', 'dryPremigrationCleanupRun']);
+        $value = $this->getValue(['parameters', 'dryPremigrationCleanupRun'], true);
         return $value;
     }
 

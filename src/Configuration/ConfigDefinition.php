@@ -18,8 +18,13 @@ class ConfigDefinition extends BaseConfigDefinition
         $parametersNode
             ->children()
                 ->enumNode('action')
-                    ->values([Config::ACTION_RUN, Config::ACTION_CHECK])
-                    ->defaultValue(Config::ACTION_RUN)
+                    ->values([
+                        Config::ACTION_MIGRATE_STRUCTURE,
+                        Config::ACTION_MIGRATE_DATA,
+                        Config::ACTION_CHECK,
+                        Config::ACTION_CLEANUP,
+                    ])
+                    ->defaultValue(Config::ACTION_MIGRATE_STRUCTURE)
                 ->end()
                 ->arrayNode('credentials')
                     ->children()
@@ -55,11 +60,8 @@ class ConfigDefinition extends BaseConfigDefinition
                 ->arrayNode('migrateDatabases')
                     ->scalarPrototype()->end()
                 ->end()
-                ->arrayNode('synchronize')
-                    ->children()
-                        ->booleanNode('dryPremigrationCleanupRun')->defaultTrue()->end()
-                    ->end()
-                ->end()
+                ->booleanNode('synchronize')->defaultFalse()->end()
+                ->booleanNode('dryPremigrationCleanupRun')->defaultTrue()->end()
             ->end()
         ;
         // @formatter:on
