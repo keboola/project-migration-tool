@@ -33,6 +33,13 @@ class Config extends BaseConfig
         return $value;
     }
 
+    public function skipCheck(): bool
+    {
+        /** @var bool $value */
+        $value = $this->getValue(['parameters', 'skipCheck'], false);
+        return $value;
+    }
+
     public function getSynchronizeDryPremigrationCleanupRun(): bool
     {
         /** @var bool $value */

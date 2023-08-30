@@ -57,7 +57,12 @@ class MigrateStructure
                 'SHOW DATABASES LIKE %s',
                 QueryBuilder::quote($database)
             ));
-            assert(count($sourceDatabases) === 1);
+            if (!$this->assert(
+                count($sourceDatabases) === 1,
+                sprintf('Database "%s" not found on source account.', $database)
+            )) {
+                continue;
+            }
             $sourceDatabase = current($sourceDatabases);
 
             $this->logger->info(sprintf('Migrate database "%s".', $database));
@@ -118,7 +123,12 @@ class MigrateStructure
                     $projectRoles->getFutureTableGrantsFromAllRoles()
                 );
                 $ownershipOnSchema = array_filter($schemaGrants, fn($v) => $v->getPrivilege() === 'OWNERSHIP');
-                assert(count($ownershipOnSchema) === 1);
+                if (!$this->assert(
+                    count($ownershipOnSchema) === 1,
+                    sprintf('Schema %s ownership not found.', $schemaName)
+                ) || !$ownershipOnSchema) {
+                    continue;
+                }
 
                 $schemaOptions = array_map(fn($v) => trim($v), explode(',', $schema['options']));
 
@@ -163,7 +173,12 @@ class MigrateStructure
                         $tableGrants,
                         fn(GrantToRole $v) => $v->getPrivilege() === 'OWNERSHIP'
                     );
-                    assert(count($ownershipOnTable) === 1);
+                    if (!$this->assert(
+                        count($ownershipOnTable) === 1,
+                        sprintf('Table %s.%s.%s ownership not found.', $database, $schemaName, $tableName)
+                    ) || !$ownershipOnTable) {
+                        continue;
+                    }
 
                     $ownershipOnTable = current($ownershipOnTable);
 
@@ -466,7 +481,12 @@ SQL;
             'SHOW USERS LIKE %s',
             QueryBuilder::quote($userGrant->getName())
         ));
-        assert(count($describeUser) === 1);
+        if (!$this->assert(
+            count($describeUser) === 1,
+            sprintf('User "%s" not found.', $userGrant->getName())
+        ) || !$describeUser) {
+            return;
+        }
 
         $allowOptions = [
             'default_secondary_roles',
@@ -554,7 +574,12 @@ SQL;
             foreach ($views as $viewKey => $view) {
                 $ownershipRole = $projectRoles->getRole($view['owner']);
                 $warehouseGrants = $ownershipRole->getAssignedGrants()->getWarehouseGrants();
-                assert(count($warehouseGrants) > 0);
+                if (!$this->assert(
+                    count($warehouseGrants) > 0,
+                    sprintf('Warehouse grant for %s view not found.', $view['name'])
+                ) || !$warehouseGrants) {
+                    continue;
+                }
 
                 $this->destinationConnection->useWarehouse(current($warehouseGrants)->getName());
                 $this->destinationConnection->useRole($view['owner']);
@@ -637,7 +662,12 @@ SQL;
                 $functionsGrants,
                 fn($v) => str_contains($v->getGrantedBy(), $function['schema_name'])
             );
-            assert(count($ownership) >= 1);
+            if (!$this->assert(
+                count($ownership) > 0,
+                sprintf('Ownership grant for %s view not found.', $function['name'])
+            ) || !$ownership) {
+                continue;
+            }
             $ownershipRole = current($ownership);
             $warehouseGrants = $projectRoles
                 ->getRole($ownershipRole->getGrantedBy())
@@ -728,10 +758,20 @@ SQL;
                 $proceduresGrants,
                 fn($v) => str_contains($v->getGrantedBy(), $procedure['schema_name'])
             );
-            assert(count($ownership) >= 1);
+            if (!$this->assert(
+                count($ownership) > 0,
+                sprintf('Ownership grant for %s view not found.', $procedure['name'])
+            ) || !$ownership) {
+                continue;
+            }
             $ownershipRole = $projectRoles->getRole(current($ownership)->getGrantedBy());
             $warehouseGrants = $ownershipRole->getAssignedGrants()->getWarehouseGrants();
-            assert(count($warehouseGrants) > 0);
+            if (!$this->assert(
+                count($warehouseGrants) > 0,
+                sprintf('Warehouse grant for %s view not found.', $procedure['name'])
+            ) || !$warehouseGrants) {
+                continue;
+            }
 
             $this->destinationConnection->useWarehouse(current($warehouseGrants)->getName());
             $this->destinationConnection->useRole(current($ownership)->getGrantedBy());
@@ -761,5 +801,15 @@ SQL;
             }
             $this->destinationConnection->assignGrantToRole($proceduresGrant);
         }
+    }
+
+    private function assert(bool $assert, string $message): bool
+    {
+        if (!$this->config->skipCheck()) {
+            assert($assert, $message);
+        } else {
+            $this->logger->info($message);
+        }
+        return $assert;
     }
 }
