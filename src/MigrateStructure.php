@@ -810,7 +810,7 @@ SQL;
     {
         if (!$this->config->skipCheck()) {
             assert($assert, $message);
-        } else {
+        } elseif (!$assert) {
             $this->logger->info($message);
         }
         return $assert;
