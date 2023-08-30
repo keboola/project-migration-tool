@@ -28,6 +28,7 @@ class ConfigDefinition extends BaseConfigDefinition
                     ->defaultValue(Config::ACTION_MIGRATE_STRUCTURE)
                 ->end()
                 ->arrayNode('credentials')
+                    ->ignoreExtraKeys()
                     ->children()
                         ->arrayNode('source')
                             ->children()
