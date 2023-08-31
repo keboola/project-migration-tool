@@ -26,8 +26,6 @@ class MigrateStructure
         'PUBLIC',
     ];
 
-    private array $missingUsers = [];
-
     private array $usedUsers = [];
 
     public function __construct(
@@ -356,7 +354,7 @@ class MigrateStructure
             }
 
             foreach ($projectRoles->getUserGrantsFromAllRoles() as $grant) {
-                if ($this->config->skipCheck() && in_array($grant->getName(), $this->missingUsers)) {
+                if ($this->config->skipCheck() && !in_array($grant->getName(), $this->usedUsers)) {
                     continue;
                 }
                 $this->destinationConnection->assignGrantToRole($grant);
@@ -477,10 +475,6 @@ SQL;
     {
         $this->destinationConnection->useRole($userGrant->getGrantedBy());
 
-        if (!in_array($userGrant->getName(), $this->usedUsers)) {
-            $this->usedUsers[] = $userGrant->getName();
-        }
-
         $this->sourceConnection->useRole($this->mainMigrationRoleSourceAccount);
         $describeUser = $this->sourceConnection->fetchAll(sprintf(
             'SHOW USERS LIKE %s',
@@ -490,8 +484,11 @@ SQL;
             count($describeUser) === 1,
             sprintf('User "%s" not found.', $userGrant->getName())
         ) || !$describeUser) {
-            $this->missingUsers[] = $userGrant->getName();
             return;
+        }
+
+        if (!in_array($userGrant->getName(), $this->usedUsers)) {
+            $this->usedUsers[] = $userGrant->getName();
         }
 
         $allowOptions = [
