@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace ProjectMigrationTool\Snowflake;
 
+use Keboola\Component\UserException;
+use Keboola\SnowflakeDbAdapter\Exception\SnowflakeDbAdapterException;
 use Psr\Log\LoggerInterface;
 
 class ConnectionFactory
@@ -14,7 +16,8 @@ class ConnectionFactory
         string $password,
         string $warehouse,
         string $role,
-        ?LoggerInterface $logger = null
+        string $connectionName,
+        ?LoggerInterface $logger = null,
     ): Connection {
         $options = [
             'host' => $host,
@@ -23,6 +26,17 @@ class ConnectionFactory
             'warehouse' => $warehouse,
             'clientSessionKeepAlive' => true,
         ];
-        return new Connection($options, $role, $logger);
+        try {
+            return new Connection($options, $role, $logger);
+        } catch (SnowflakeDbAdapterException $e) {
+            if (str_contains($e->getMessage(), 'Incorrect username or password')) {
+                throw new UserException(sprintf(
+                    'Incorrect username or password for %s database.',
+                    $connectionName
+                ));
+            } else {
+                throw $e;
+            }
+        }
     }
 }
