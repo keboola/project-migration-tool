@@ -26,6 +26,8 @@ class MigrateStructure
         'PUBLIC',
     ];
 
+    private array $missingUsers = [];
+
     private array $usedUsers = [];
 
     public function __construct(
@@ -354,6 +356,9 @@ class MigrateStructure
             }
 
             foreach ($projectRoles->getUserGrantsFromAllRoles() as $grant) {
+                if ($this->config->skipCheck() && in_array($grant->getName(), $this->missingUsers)) {
+                    continue;
+                }
                 $this->destinationConnection->assignGrantToRole($grant);
             }
         }
@@ -485,6 +490,7 @@ SQL;
             count($describeUser) === 1,
             sprintf('User "%s" not found.', $userGrant->getName())
         ) || !$describeUser) {
+            $this->missingUsers[] = $userGrant->getName();
             return;
         }
 
