@@ -1,6 +1,6 @@
 {
   "parameters": {
-    "action": "run",
+    "action": "runMigrateStructure",
     "credentials": {
       "source": {
         "host": "keboola.eu-central-1.snowflakecomputing.com",
@@ -22,8 +22,6 @@
       "KEBOOLA_[PROJECT_ID_2]",
       "KEBOOLA_[PROJECT_ID_3]"
     ],
-    "synchronize": {
-      "dryPremigrationCleanupRun": true
-    }
+    "synchronize": true
   }
 }
