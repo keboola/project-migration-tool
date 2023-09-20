@@ -64,6 +64,28 @@ SQL;
         );
     }
 
+    public static function functionJavaScript(array $function, array $functionParams): string
+    {
+        $functionBody = <<<SQL
+CREATE FUNCTION %s%s
+RETURNS %s 
+LANGUAGE JAVASCRIPT
+AS 
+$$
+%s
+$$
+;
+SQL;
+
+        return sprintf(
+            $functionBody,
+            Helper::quoteIdentifier($function['name']),
+            $functionParams['signature'],
+            $functionParams['returns'],
+            trim($functionParams['body'])
+        );
+    }
+
     public static function procedureSql(array $procedure, array $procedureParams): string
     {
         $sql = <<<SQL
