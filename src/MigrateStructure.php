@@ -649,6 +649,9 @@ SQL;
                 case 'PYTHON':
                     $functionQuery = BuildQueryHelper::functionPython($function, $functionParams);
                     break;
+                case 'JAVASCRIPT':
+                    $functionQuery = BuildQueryHelper::functionJavaScript($function, $functionParams);
+                    break;
                 default:
                     $this->logger->warning(sprintf(
                         'Warning: Skip creating function "%s". Language "%s" is not supported.',
