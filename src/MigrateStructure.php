@@ -155,6 +155,12 @@ class MigrateStructure
                     Helper::quoteIdentifier($schemaName)
                 ));
 
+                $primaryKeys = $this->sourceConnection->fetchAll(sprintf(
+                    'SHOW PRIMARY KEYS IN SCHEMA %s.%s;',
+                    Helper::quoteIdentifier($database),
+                    Helper::quoteIdentifier($schemaName)
+                ));
+
                 foreach ($tables as $table) {
                     $tableName = $table['name'];
 
@@ -209,6 +215,33 @@ class MigrateStructure
                     $tableGrants = array_filter($tableGrants, fn(GrantToRole $v) => $v->getPrivilege() !== 'OWNERSHIP');
                     foreach ($tableGrants as $tableGrant) {
                         $this->destinationConnection->assignGrantToRole($tableGrant);
+                    }
+
+                    $tablePrimaryKeys = array_filter(
+                        $primaryKeys,
+                        fn($v) => $v['table_name'] === $tableName
+                    );
+                    if ($tablePrimaryKeys) {
+                        try {
+                            $this->destinationConnection->query(sprintf(
+                                'ALTER TABLE %s.%s.%s ADD PRIMARY KEY (%s);',
+                                Helper::quoteIdentifier($database),
+                                Helper::quoteIdentifier($schemaName),
+                                Helper::quoteIdentifier($tableName),
+                                implode(
+                                    ',',
+                                    array_map(fn($v) => Helper::quoteIdentifier($v['column_name']), $tablePrimaryKeys)
+                                )
+                            ));
+                        } catch (RuntimeException $e) {
+                            $this->logger->info(sprintf(
+                                'Warning: Skip creating primary key on table %s.%s.%s. Error: "%s".',
+                                Helper::quoteIdentifier($database),
+                                Helper::quoteIdentifier($schemaName),
+                                Helper::quoteIdentifier($tableName),
+                                $e->getMessage()
+                            ));
+                        }
                     }
                 }
             }
