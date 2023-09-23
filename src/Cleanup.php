@@ -27,8 +27,8 @@ class Cleanup
 
     public function sourceAccount(): void
     {
-        $sqls = [];
         foreach ($this->config->getDatabases() as $database) {
+            $sqls = [];
             $this->sourceConnection->useRole($this->config->getSourceSnowflakeRole());
             $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
             $projectUser = $this->getProjectUser($databaseRole);
