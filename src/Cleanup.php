@@ -44,7 +44,7 @@ class Cleanup
                     fn(array $v) => FutureGrantToRole::fromArray($v),
                     $this->sourceConnection->fetchAll(sprintf(
                         'SHOW FUTURE GRANTS TO ROLE %s',
-                            Helper::quoteIdentifier($role->getName())
+                        Helper::quoteIdentifier($role->getName())
                     ))
                 );
 
