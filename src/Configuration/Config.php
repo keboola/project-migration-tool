@@ -16,6 +16,8 @@ class Config extends BaseConfig
 
     public const ACTION_CLEANUP = 'runCleanup';
 
+    public const ACTION_CLEANUP_SOURCE_ACCOUNT = 'runCleanupSourceAccount';
+
     public function getRunAction(): string
     {
         return $this->getStringValue(['parameters', 'action'], 'run');

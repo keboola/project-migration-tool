@@ -11,6 +11,7 @@ use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Snowflake\Connection;
 use ProjectMigrationTool\Snowflake\Helper;
 use ProjectMigrationTool\ValueObject\FutureGrantToRole;
+use ProjectMigrationTool\ValueObject\GrantToRole;
 use ProjectMigrationTool\ValueObject\GrantToUser;
 use Psr\Log\LoggerInterface;
 
@@ -18,9 +19,70 @@ class Cleanup
 {
     public function __construct(
         readonly Config $config,
+        readonly Connection $sourceConnection,
         readonly Connection $destinationConnection,
         readonly LoggerInterface $logger,
     ) {
+    }
+
+    public function sourceAccount(): void
+    {
+        $sqls = [];
+        foreach ($this->config->getDatabases() as $database) {
+            $this->sourceConnection->useRole($this->config->getSourceSnowflakeRole());
+            $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
+            $projectUser = $this->getProjectUser($databaseRole);
+
+            $data = $this->getDataToRemove($this->sourceConnection, $databaseRole);
+
+            // drop roles
+            $sqls[] = sprintf('DROP ROLE %s;', Helper::quoteIdentifier($databaseRole));
+
+            $roles = array_map(fn(array $v) => GrantToRole::fromArray($v), $data['ROLE'] ?? []);
+            foreach ($roles as $role) {
+                $futureGrants = array_map(
+                    fn(array $v) => FutureGrantToRole::fromArray($v),
+                    $this->sourceConnection->fetchAll(sprintf(
+                        'SHOW FUTURE GRANTS TO ROLE %s',
+                            Helper::quoteIdentifier($role->getName())
+                    ))
+                );
+
+                foreach ($futureGrants as $futureGrant) {
+                    $sqls[] = sprintf(
+                        'REVOKE %s ON FUTURE TABLES IN SCHEMA %s FROM ROLE %s;',
+                        $futureGrant->getPrivilege(),
+                        $futureGrant->getName(),
+                        Helper::quoteIdentifier($futureGrant->getGranteeName()),
+                    );
+                }
+
+                $sqls[] = sprintf(
+                    'DROP ROLE %s;',
+                    Helper::quoteIdentifier($role->getName())
+                );
+            }
+
+            // drop users
+            $sqls[] = sprintf('DROP USER %s;', Helper::quoteIdentifier($projectUser->getGranteeName()));
+
+            $users = array_map(fn(array $v) => GrantToRole::fromArray($v), $data['USER'] ?? []);
+            foreach ($users as $user) {
+                $sqls[] = sprintf(
+                    'DROP USER %s;',
+                    Helper::quoteIdentifier($user->getName())
+                );
+            }
+
+            $sqls[] = sprintf(
+                'DROP DATABASE %s;',
+                Helper::quoteIdentifier($database)
+            );
+
+            foreach ($sqls as $sql) {
+                $this->logger->info($sql);
+            }
+        }
     }
 
     public function preMigration(string $mainRoleName): void
@@ -39,7 +101,7 @@ class Cleanup
                 continue;
             }
             $databaseRole = $this->destinationConnection->getOwnershipRoleOnDatabase($database);
-            $data = $this->getDataToRemove($databaseRole);
+            $data = $this->getDataToRemove($this->destinationConnection, $databaseRole);
 
             $currentUser = $this->destinationConnection->fetchAll('SELECT CURRENT_USER() AS "user";');
             foreach ($data['USER'] ?? [] as $user) {
@@ -90,15 +152,10 @@ class Cleanup
                 $sqls[] = sprintf('DROP ROLE IF EXISTS %s;', Helper::quoteIdentifier($role['name']));
             }
 
-            $grantsOfRole = $this->destinationConnection->fetchAll(sprintf('SHOW GRANTS OF ROLE %s', $databaseRole));
-            $filteredGrantsOfRole = array_filter(
-                $grantsOfRole,
-                fn($v) => strtoupper($v['grantee_name']) === strtoupper($databaseRole)
-            );
-            assert(count($filteredGrantsOfRole) === 1);
-            $grantOfRole = current($filteredGrantsOfRole);
-            if ($grantOfRole['granted_by'] !== $currentRole) {
-                $currentRole = $grantOfRole['granted_by'];
+            $projectUser = $this->getProjectUser($databaseRole);
+
+            if ($projectUser->getGrantedBy() !== $currentRole) {
+                $currentRole = $projectUser->getGrantedBy();
                 $sqls[] = sprintf(
                     'USE ROLE %s;',
                     Helper::quoteIdentifier($this->config->getTargetSnowflakeRole())
@@ -112,7 +169,7 @@ class Cleanup
             }
             $sqls[] = sprintf(
                 'DROP USER IF EXISTS %s;',
-                Helper::quoteIdentifier($grantOfRole['grantee_name'])
+                Helper::quoteIdentifier($projectUser->getGranteeName())
             );
 
             $sqls[] = sprintf('DROP ROLE IF EXISTS %s;', Helper::quoteIdentifier($databaseRole));
@@ -202,9 +259,9 @@ class Cleanup
         }
     }
 
-    private function getDataToRemove(string $role): array
+    private function getDataToRemove(Connection $connection, string $role): array
     {
-        $grants = $this->destinationConnection->fetchAll(sprintf(
+        $grants = $connection->fetchAll(sprintf(
             'SHOW GRANTS TO ROLE %s',
             Helper::quoteIdentifier($role)
         ));
@@ -225,12 +282,25 @@ class Cleanup
             $roleGrants = $mapGrants['ROLE'];
             foreach ($roleGrants as $roleGrant) {
                 $mapGrants = array_merge_recursive(
-                    $this->getDataToRemove($roleGrant['name']),
+                    $this->getDataToRemove($connection, $roleGrant['name']),
                     $mapGrants,
                 );
             }
         }
 
         return $mapGrants;
+    }
+
+    private function getProjectUser(string $databaseRole): GrantToUser
+    {
+        $grantsOfRole = $this->destinationConnection->fetchAll(sprintf('SHOW GRANTS OF ROLE %s', $databaseRole));
+        $filteredGrantsOfRole = array_filter(
+            $grantsOfRole,
+            fn($v) => strtoupper($v['grantee_name']) === strtoupper($databaseRole)
+        );
+        assert(count($filteredGrantsOfRole) === 1);
+        $grantOfRole = current($filteredGrantsOfRole);
+
+        return GrantToUser::fromArray($grantOfRole);
     }
 }
