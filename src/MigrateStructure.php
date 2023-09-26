@@ -354,6 +354,9 @@ class MigrateStructure
             }
 
             foreach ($projectRoles->getUserGrantsFromAllRoles() as $grant) {
+                if ($this->config->skipCheck() && !in_array($grant->getName(), $this->usedUsers)) {
+                    continue;
+                }
                 $this->destinationConnection->assignGrantToRole($grant);
             }
         }
@@ -472,10 +475,6 @@ SQL;
     {
         $this->destinationConnection->useRole($userGrant->getGrantedBy());
 
-        if (!in_array($userGrant->getName(), $this->usedUsers)) {
-            $this->usedUsers[] = $userGrant->getName();
-        }
-
         $this->sourceConnection->useRole($this->mainMigrationRoleSourceAccount);
         $describeUser = $this->sourceConnection->fetchAll(sprintf(
             'SHOW USERS LIKE %s',
@@ -486,6 +485,10 @@ SQL;
             sprintf('User "%s" not found.', $userGrant->getName())
         ) || !$describeUser) {
             return;
+        }
+
+        if (!in_array($userGrant->getName(), $this->usedUsers)) {
+            $this->usedUsers[] = $userGrant->getName();
         }
 
         $allowOptions = [
@@ -810,7 +813,7 @@ SQL;
     {
         if (!$this->config->skipCheck()) {
             assert($assert, $message);
-        } else {
+        } elseif (!$assert) {
             $this->logger->info($message);
         }
         return $assert;
