@@ -24,6 +24,7 @@ class ConfigDefinition extends BaseConfigDefinition
                         Config::ACTION_MIGRATE_DATA,
                         Config::ACTION_CHECK,
                         Config::ACTION_CLEANUP,
+                        Config::ACTION_CLEANUP_SOURCE_ACCOUNT,
                     ])
                     ->defaultValue(Config::ACTION_MIGRATE_STRUCTURE)
                 ->end()

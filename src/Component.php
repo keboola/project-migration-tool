@@ -26,6 +26,9 @@ class Component extends BaseComponent
             case Config::ACTION_CHECK:
                 $this->runCheckMigratedData();
                 break;
+            case Config::ACTION_CLEANUP_SOURCE_ACCOUNT:
+                $this->runCleanupSourceAccount();
+                break;
             default:
                 throw new Exception(sprintf('Action "%s" is not supported.', $this->getConfig()->getAction()));
         }
@@ -119,6 +122,16 @@ class Component extends BaseComponent
         $this->getLogger()->info('Checking data.');
         $migrationChecker->postMigrationCheckStructure($mainRoleWithGrants);
 //        $migrationChecker->postMigrationCheckData($mainRoleWithGrants);
+    }
+
+    private function runCleanupSourceAccount(): void
+    {
+        $migrateFactory = new MigrateFactory($this->getLogger(), $this->getConfig());
+
+        $cleanup = $migrateFactory->createCleanup();
+
+        $this->getLogger()->info('Cleanup source account.');
+        $cleanup->sourceAccount();
     }
 
     public function getConfig(): Config

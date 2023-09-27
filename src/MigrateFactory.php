@@ -60,6 +60,7 @@ class MigrateFactory
     {
         return new Cleanup(
             $this->config,
+            $this->sourceConnection,
             $this->targetConnection,
             $this->logger,
         );
