@@ -37,7 +37,7 @@ class PrepareMigration
             ));
 
             // Waiting for previous SQL query
-            sleep(1);
+            sleep(5);
 
             // Migration database sqls
             $this->migrateConnection->query(sprintf(
