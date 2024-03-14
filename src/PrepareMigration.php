@@ -35,10 +35,9 @@ class PrepareMigration
                 $this->migrateConnection->getRegion(),
                 $this->migrateConnection->getAccount()
             ));
-            $this->sourceConnection->useRole($this->sourceConnection->getOwnershipRoleOnDatabase($database));
 
             // Waiting for previous SQL query
-            sleep(1);
+            sleep(5);
 
             // Migration database sqls
             $this->migrateConnection->query(sprintf(
