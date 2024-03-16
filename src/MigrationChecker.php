@@ -49,7 +49,7 @@ class MigrationChecker
             // Compare TABLES
             $compares[] = [
                 'group' => 'Tables',
-                'itemNameKey' => 'TABLE_NAME',
+                'itemNameKey' => 'ID',
                 'sql' => sprintf(
                     'SELECT %s FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES WHERE DELETED IS NULL AND TABLE_CATALOG = %s ORDER BY TABLE_SCHEMA, TABLE_NAME;',
                     implode(',', [
