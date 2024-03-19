@@ -115,7 +115,12 @@ class Connection extends AdapterConnection
     public function assignGrantToRole(GrantToRole $grant): void
     {
         if ($grant->getGrantedOn() === 'SCHEMA' &&
-            (in_array($grant->getPrivilege(), ['CREATE BUDGET', 'CREATE ANOMALY_DETECTION', 'CREATE FORECAST']))) {
+            (in_array(
+                $grant->getPrivilege(),
+                ['CREATE SNOWFLAKE.CORE.BUDGET', 'CREATE BUDGET', 'CREATE ANOMALY_DETECTION', 'CREATE FORECAST']
+            ))
+        ) {
+            // CREATE SNOWFLAKE.CORE.BUDGET
             // CREATE BUDGET is not supported in Snowflake
             // CREATE ANOMALY_DETECTION likewise
             // CREATE FORECAST likewise
