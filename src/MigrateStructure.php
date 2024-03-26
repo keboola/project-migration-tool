@@ -187,11 +187,19 @@ class MigrateStructure
                     }
 
                     $ownershipOnTable = current($ownershipOnTable);
+                    $this->logger->info(
+                        sprintf(
+                            'Ownership on table "%s"."%s" is "%s".',
+                            $schemaName,
+                            $tableName,
+                            $ownershipOnTable->getGrantedTo()
+                        )
+                    );
 
                     $this->assignSharePrivilegesToRole($database, $ownershipOnTable->getGrantedBy());
                     $this->destinationConnection->useRole($ownershipOnTable->getGrantedBy());
 
-                    $this->logger->info(sprintf('Creating table structure "%s"', $tableName));
+                    $this->logger->info(sprintf('Creating table structure "%s"."%s"', $schemaName, $tableName));
                     try {
                         $this->destinationConnection->query(sprintf(
                             'CREATE TABLE %s.%s.%s LIKE %s.%s.%s;',
