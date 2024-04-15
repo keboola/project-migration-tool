@@ -69,7 +69,7 @@ class MigrationChecker
                             $database,
                             $schema['name'],
                             $table['name']
-                        )
+                        ),
                     ];
                 }
             }
