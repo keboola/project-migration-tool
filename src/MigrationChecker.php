@@ -47,6 +47,33 @@ class MigrationChecker
             $compares = [];
             // phpcs:disable Generic.Files.LineLength
             // Compare TABLES
+            $schemas = $this->sourceConnection->fetchAll(sprintf(
+                'SHOW SCHEMAS IN DATABASE %s',
+                Helper::quoteIdentifier($database)
+            ));
+            foreach ($schemas as $schema) {
+                $tables = $this->sourceConnection->fetchAll(sprintf(
+                    'SHOW TABLES IN SCHEMA %s.%s',
+                    Helper::quoteIdentifier($database),
+                    Helper::quoteIdentifier($schema['name'])
+                ));
+                foreach ($tables as $table) {
+                    $compares[] = [
+                        'group' => 'Tables',
+                        'itemNameKey' => 'TABLE_ID',
+                        'sql' => sprintf(
+                            'SELECT CONCAT(%s,\'.\',%s,\'.\',%s) AS TABLE_ID, count(*) AS ROW_COUNT FROM %s.%s.%s',
+                            $database,
+                            $schema['name'],
+                            $table['name'],
+                            $database,
+                            $schema['name'],
+                            $table['name']
+                        ),
+                    ];
+                }
+            }
+            /*
             $compares[] = [
                 'group' => 'Tables',
                 'itemNameKey' => 'TABLE_NAME',
@@ -64,7 +91,7 @@ class MigrationChecker
                     QueryBuilder::quote($database)
                 ),
             ];
-
+            */
             // Compare USERS
             $compares[] = [
                 'group' => 'Users',
