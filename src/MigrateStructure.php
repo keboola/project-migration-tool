@@ -189,10 +189,12 @@ class MigrateStructure
                     $ownershipOnTable = current($ownershipOnTable);
                     $this->logger->info(
                         sprintf(
-                            'Ownership on table "%s"."%s" is "%s".',
+                            'Ownership on table "%s"."%s" is To: %s, Name: %s, Grantee: %s".',
                             $schemaName,
                             $tableName,
-                            $ownershipOnTable->getGrantedTo()
+                            $ownershipOnTable->getGrantedTo(),
+                            $ownershipOnTable->getName(),
+                            $ownershipOnTable->getGranteeName()
                         )
                     );
 
