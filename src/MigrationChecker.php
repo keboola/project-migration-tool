@@ -59,9 +59,9 @@ class MigrationChecker
                 foreach ($tables as $table) {
                     $compares[] = [
                         'group' => 'Tables',
-                        'itemNameKey' => 'TABLE_ID',
+                        'itemNameKey' => 'ID',
                         'sql' => sprintf(
-                            'SELECT \'%s.%s.%s\' AS TABLE_ID, count(*) AS ROW_COUNT FROM %s.%s.%s',
+                            'SELECT \'%s.%s.%s\' AS ID, count(*) AS ROW_COUNT FROM %s.%s.%s',
                             Helper::quoteIdentifier($database),
                             Helper::quoteIdentifier($schema['name']),
                             Helper::quoteIdentifier($table['name']),
