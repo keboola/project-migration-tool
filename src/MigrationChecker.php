@@ -135,7 +135,7 @@ class MigrationChecker
                 ));
                 foreach ($tables as $table) {
                     $compares[] = [
-                        'group' => 'Tables',
+                        'group' => sprintf('Table: %s.%s.%s', $database, $schema['name'], $table['name']),
                         'itemNameKey' => 'ID',
                         'sql' => sprintf(
                             'SELECT \'%s.%s.%s\' AS ID, count(*) AS ROW_COUNT FROM %s.%s.%s',
@@ -150,25 +150,6 @@ class MigrationChecker
                     ];
                 }
             }
-            /*
-            $compares[] = [
-                'group' => 'Tables',
-                'itemNameKey' => 'TABLE_NAME',
-                'sql' => sprintf(
-                    'SELECT %s FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES WHERE DELETED IS NULL AND TABLE_CATALOG = %s ORDER BY TABLE_SCHEMA, TABLE_NAME;',
-                    implode(',', [
-                        'CONCAT(TABLE_SCHEMA, \'.\', TABLE_NAME) AS ID',
-                        'TABLE_NAME',
-                        'TABLE_SCHEMA',
-                        'TABLE_OWNER',
-                        'TABLE_TYPE',
-                        'ROW_COUNT',
-                        // 'BYTES',
-                    ]),
-                    QueryBuilder::quote($database)
-                ),
-            ];
-            */
             // phpcs:enable Generic.Files.LineLength
 
             foreach ($compares as $compare) {
