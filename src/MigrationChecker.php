@@ -45,53 +45,6 @@ class MigrationChecker
             );
             $compares = [];
             // phpcs:disable Generic.Files.LineLength
-            // Compare TABLES
-            $schemas = $this->sourceConnection->fetchAll(sprintf(
-                'SHOW SCHEMAS IN DATABASE %s',
-                Helper::quoteIdentifier($database)
-            ));
-            foreach ($schemas as $schema) {
-                $tables = $this->sourceConnection->fetchAll(sprintf(
-                    'SHOW TABLES IN SCHEMA %s.%s',
-                    Helper::quoteIdentifier($database),
-                    Helper::quoteIdentifier($schema['name'])
-                ));
-                foreach ($tables as $table) {
-                    $compares[] = [
-                        'group' => 'Tables',
-                        'itemNameKey' => 'ID',
-                        'sql' => sprintf(
-                            'SELECT \'%s.%s.%s\' AS ID, count(*) AS ROW_COUNT FROM %s.%s.%s',
-                            Helper::quoteIdentifier($database),
-                            Helper::quoteIdentifier($schema['name']),
-                            Helper::quoteIdentifier($table['name']),
-                            Helper::quoteIdentifier($database),
-                            Helper::quoteIdentifier($schema['name']),
-                            Helper::quoteIdentifier($table['name'])
-                        ),
-                        'role' => $databaseRole,
-                    ];
-                }
-            }
-            /*
-            $compares[] = [
-                'group' => 'Tables',
-                'itemNameKey' => 'TABLE_NAME',
-                'sql' => sprintf(
-                    'SELECT %s FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES WHERE DELETED IS NULL AND TABLE_CATALOG = %s ORDER BY TABLE_SCHEMA, TABLE_NAME;',
-                    implode(',', [
-                        'CONCAT(TABLE_SCHEMA, \'.\', TABLE_NAME) AS ID',
-                        'TABLE_NAME',
-                        'TABLE_SCHEMA',
-                        'TABLE_OWNER',
-                        'TABLE_TYPE',
-                        'ROW_COUNT',
-                        // 'BYTES',
-                    ]),
-                    QueryBuilder::quote($database)
-                ),
-            ];
-            */
             // Compare USERS
             $compares[] = [
                 'group' => 'Users',
@@ -169,6 +122,53 @@ class MigrationChecker
                     implode(', ', array_map(fn($v) => QueryBuilder::quote($v), $rolesAndUsers['roles']))
                 ),
             ];
+            // Compare TABLES
+            $schemas = $this->sourceConnection->fetchAll(sprintf(
+                'SHOW SCHEMAS IN DATABASE %s',
+                Helper::quoteIdentifier($database)
+            ));
+            foreach ($schemas as $schema) {
+                $tables = $this->sourceConnection->fetchAll(sprintf(
+                    'SHOW TABLES IN SCHEMA %s.%s',
+                    Helper::quoteIdentifier($database),
+                    Helper::quoteIdentifier($schema['name'])
+                ));
+                foreach ($tables as $table) {
+                    $compares[] = [
+                        'group' => 'Tables',
+                        'itemNameKey' => 'ID',
+                        'sql' => sprintf(
+                            'SELECT \'%s.%s.%s\' AS ID, count(*) AS ROW_COUNT FROM %s.%s.%s',
+                            Helper::quoteIdentifier($database),
+                            Helper::quoteIdentifier($schema['name']),
+                            Helper::quoteIdentifier($table['name']),
+                            Helper::quoteIdentifier($database),
+                            Helper::quoteIdentifier($schema['name']),
+                            Helper::quoteIdentifier($table['name'])
+                        ),
+                        'role' => $databaseRole,
+                    ];
+                }
+            }
+            /*
+            $compares[] = [
+                'group' => 'Tables',
+                'itemNameKey' => 'TABLE_NAME',
+                'sql' => sprintf(
+                    'SELECT %s FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES WHERE DELETED IS NULL AND TABLE_CATALOG = %s ORDER BY TABLE_SCHEMA, TABLE_NAME;',
+                    implode(',', [
+                        'CONCAT(TABLE_SCHEMA, \'.\', TABLE_NAME) AS ID',
+                        'TABLE_NAME',
+                        'TABLE_SCHEMA',
+                        'TABLE_OWNER',
+                        'TABLE_TYPE',
+                        'ROW_COUNT',
+                        // 'BYTES',
+                    ]),
+                    QueryBuilder::quote($database)
+                ),
+            ];
+            */
             // phpcs:enable Generic.Files.LineLength
 
             foreach ($compares as $compare) {
