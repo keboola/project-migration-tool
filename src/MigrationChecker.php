@@ -43,8 +43,6 @@ class MigrationChecker
                 $rolesAndUsers,
                 ['users' => [$databaseRole], 'roles' => [$databaseRole]]
             );
-            // use the database role
-            $this->ta
             $compares = [];
             // phpcs:disable Generic.Files.LineLength
             // Compare TABLES
