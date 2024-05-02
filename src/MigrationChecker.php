@@ -43,7 +43,8 @@ class MigrationChecker
                 $rolesAndUsers,
                 ['users' => [$databaseRole], 'roles' => [$databaseRole]]
             );
-
+            // use the database role
+            $this->ta
             $compares = [];
             // phpcs:disable Generic.Files.LineLength
             // Compare TABLES
@@ -70,6 +71,7 @@ class MigrationChecker
                             $schema['name'],
                             $table['name']
                         ),
+                        'role' => $databaseRole,
                     ];
                 }
             }
@@ -172,7 +174,7 @@ class MigrationChecker
             // phpcs:enable Generic.Files.LineLength
 
             foreach ($compares as $compare) {
-                $this->compareData($compare['group'], $compare['itemNameKey'], $compare['sql']);
+                $this->compareData($compare['group'], $compare['itemNameKey'], $compare['sql'], $compare['role']);
             }
         }
     }
@@ -313,8 +315,12 @@ class MigrationChecker
         }
     }
 
-    private function compareData(string $group, string $itemNameKey, string $sql): void
+    private function compareData(string $group, string $itemNameKey, string $sql, ?string $role = null): void
     {
+        if ($role) {
+            $this->sourceConnection->useRole($role);
+            $this->destinationConnection->useRole($role);
+        }
         $this->logger->info(sprintf('Getting source data for "%s".', $group));
         $sourceData = $this->sourceConnection->fetchAll($sql);
         $this->logger->info(sprintf('Getting target data for "%s".', $group));
