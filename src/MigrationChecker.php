@@ -172,7 +172,12 @@ class MigrationChecker
             // phpcs:enable Generic.Files.LineLength
 
             foreach ($compares as $compare) {
-                $this->compareData($compare['group'], $compare['itemNameKey'], $compare['sql'], $compare['role']);
+                $this->compareData(
+                    $compare['group'],
+                    $compare['itemNameKey'],
+                    $compare['sql'],
+                    array_key_exists('role', $compare) ? $compare['role'] : null
+                );
             }
         }
     }
