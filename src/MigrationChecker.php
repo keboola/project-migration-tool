@@ -61,7 +61,7 @@ class MigrationChecker
                         'group' => 'Tables',
                         'itemNameKey' => 'TABLE_ID',
                         'sql' => sprintf(
-                            'SELECT CONCAT(%s,\'.\',%s,\'.\',%s) AS TABLE_ID, count(*) AS ROW_COUNT FROM %s.%s.%s',
+                            'SELECT %s.%s.%s AS TABLE_ID, count(*) AS ROW_COUNT FROM %s.%s.%s',
                             Helper::quoteIdentifier($database),
                             Helper::quoteIdentifier($schema['name']),
                             Helper::quoteIdentifier($table['name']),
