@@ -135,7 +135,7 @@ class MigrationChecker
                 ));
                 foreach ($tables as $table) {
                     $compares[] = [
-                        'group' => 'Tables',
+                        'group' => sprintf('Table: %s.%s.%s', $database, $schema['name'], $table['name']),
                         'itemNameKey' => 'ID',
                         'sql' => sprintf(
                             'SELECT \'%s.%s.%s\' AS ID, count(*) AS ROW_COUNT FROM %s.%s.%s',
