@@ -43,7 +43,6 @@ class MigrationChecker
                 $rolesAndUsers,
                 ['users' => [$databaseRole], 'roles' => [$databaseRole]]
             );
-
             $compares = [];
             // phpcs:disable Generic.Files.LineLength
             // Compare TABLES
@@ -60,16 +59,17 @@ class MigrationChecker
                 foreach ($tables as $table) {
                     $compares[] = [
                         'group' => 'Tables',
-                        'itemNameKey' => 'TABLE_ID',
+                        'itemNameKey' => 'ID',
                         'sql' => sprintf(
-                            'SELECT CONCAT(%s,\'.\',%s,\'.\',%s) AS TABLE_ID, count(*) AS ROW_COUNT FROM %s.%s.%s',
-                            $database,
-                            $schema['name'],
-                            $table['name'],
-                            $database,
-                            $schema['name'],
-                            $table['name']
+                            'SELECT \'%s.%s.%s\' AS ID, count(*) AS ROW_COUNT FROM %s.%s.%s',
+                            Helper::quoteIdentifier($database),
+                            Helper::quoteIdentifier($schema['name']),
+                            Helper::quoteIdentifier($table['name']),
+                            Helper::quoteIdentifier($database),
+                            Helper::quoteIdentifier($schema['name']),
+                            Helper::quoteIdentifier($table['name'])
                         ),
+                        'role' => $databaseRole,
                     ];
                 }
             }
@@ -172,7 +172,12 @@ class MigrationChecker
             // phpcs:enable Generic.Files.LineLength
 
             foreach ($compares as $compare) {
-                $this->compareData($compare['group'], $compare['itemNameKey'], $compare['sql']);
+                $this->compareData(
+                    $compare['group'],
+                    $compare['itemNameKey'],
+                    $compare['sql'],
+                    array_key_exists('role', $compare) ? $compare['role'] : null
+                );
             }
         }
     }
@@ -313,8 +318,12 @@ class MigrationChecker
         }
     }
 
-    private function compareData(string $group, string $itemNameKey, string $sql): void
+    private function compareData(string $group, string $itemNameKey, string $sql, ?string $role = null): void
     {
+        if ($role) {
+            $this->sourceConnection->useRole($role);
+            $this->destinationConnection->useRole($role);
+        }
         $this->logger->info(sprintf('Getting source data for "%s".', $group));
         $sourceData = $this->sourceConnection->fetchAll($sql);
         $this->logger->info(sprintf('Getting target data for "%s".', $group));
