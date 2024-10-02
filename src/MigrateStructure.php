@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace ProjectMigrationTool;
 
+use Keboola\Component\UserException;
 use Keboola\SnowflakeDbAdapter\Exception\RuntimeException;
 use Keboola\SnowflakeDbAdapter\QueryBuilder;
 use ProjectMigrationTool\Configuration\Config;
-use ProjectMigrationTool\Exception\NoWarehouseException;
 use ProjectMigrationTool\Snowflake\BuildQueryHelper;
 use ProjectMigrationTool\Snowflake\Connection;
 use ProjectMigrationTool\Snowflake\Helper;
@@ -262,9 +262,29 @@ class MigrateStructure
         }
     }
 
-    public function createMainRole(Role $mainRoleWithGrants): void
+    public function createMainRoleAndUser(Role $mainRoleWithGrants): void
     {
         $user = $mainRole = $mainRoleWithGrants->getName();
+
+        $mainRoleExists = $this->destinationConnection->fetchAll(sprintf(
+            'SHOW ROLES LIKE %s',
+            QueryBuilder::quote($mainRole),
+        ));
+        if ($mainRoleExists) {
+            $grantsToTargetUser = $this->destinationConnection->fetchAll(sprintf(
+                'SHOW GRANTS TO USER %s',
+                QueryBuilder::quoteIdentifier($this->config->getTargetSnowflakeUser()),
+            ));
+            $mainRoleExistsOnTargetUser = array_filter(
+                $grantsToTargetUser,
+                fn($v) => $v['role'] === $mainRole,
+            );
+
+            if (!$mainRoleExistsOnTargetUser) {
+                throw new UserException('Main role is exists but not assign to migrate user.');
+            }
+            return;
+        }
 
         $this->destinationConnection->createRole(
             GrantToRole::fromArray([
@@ -276,7 +296,7 @@ class MigrateStructure
                 'grant_option' => 'true',
                 'grantee_name' => $this->config->getTargetSnowflakeRole(),
             ]),
-            $this->config->getTargetSnowflakeUser()
+            $this->config->getTargetSnowflakeUser(),
         );
 
         $mainRoleGrants = [
@@ -307,6 +327,15 @@ class MigrateStructure
             $user
         ));
 
+        $this->destinationConnection->useRole($this->mainMigrationRoleTargetAccount);
+        $this->destinationConnection->query(sprintf(
+            'GRANT ROLE %s TO ROLE SYSADMIN;',
+            $mainRoleWithGrants->getName(),
+        ));
+    }
+
+    public function createProjectRoleAndUser(Role $mainRoleWithGrants): void
+    {
         $projectUsers = array_filter(
             $mainRoleWithGrants->getAssignedGrants()->getUserGrants(),
             function (GrantToRole $v) {
@@ -321,7 +350,7 @@ class MigrateStructure
             fn(array $v) => GrantToRole::fromArray($v),
             $this->sourceConnection->fetchAll(sprintf(
                 'SHOW GRANTS TO ROLE %s',
-                Helper::quoteIdentifier($this->sourceConnection->getCurrentRole())
+                Helper::quoteIdentifier($this->sourceConnection->getCurrentRole()),
             ))
         );
 
@@ -335,12 +364,6 @@ class MigrateStructure
             $this->createUser($projectUser);
             $this->destinationConnection->assignGrantToRole($projectUser);
         }
-
-        $this->destinationConnection->useRole($this->mainMigrationRoleTargetAccount);
-        $this->destinationConnection->query(sprintf(
-            'GRANT ROLE %s TO ROLE SYSADMIN;',
-            $mainRole
-        ));
     }
 
     /**
@@ -349,6 +372,7 @@ class MigrateStructure
     public function migrateUsersRolesAndGrants(Role $mainRole, array $grants): void
     {
         $this->logger->info('Migrating users and roles.');
+        $this->destinationConnection->useRole($mainRole->getName());
         // first step - migrate users and roles (without grants)
         foreach ($this->databases as $database) {
             $databaseRoleName = $this->sourceConnection->getOwnershipRoleOnDatabase($database);

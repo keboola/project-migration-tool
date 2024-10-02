@@ -71,7 +71,11 @@ class Component extends BaseComponent
 
         // Create MainRole in target snflk account
         $this->getLogger()->info('Creating main role in target account.');
-        $migrateStructure->createMainRole($mainRoleWithGrants);
+        $migrateStructure->createMainRoleAndUser($mainRoleWithGrants);
+
+        // Create ProjectRole in target snflk account
+        $this->getLogger()->info('Creating project role in target account.');
+        $migrateStructure->createProjectRoleAndUser($mainRoleWithGrants);
 
         $this->getLogger()->info('Migrating warehouses/users/roles with grants');
         $migrateStructure->migrateUsersRolesAndGrants($mainRoleWithGrants, $roles);

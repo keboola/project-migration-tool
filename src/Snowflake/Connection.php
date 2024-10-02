@@ -41,12 +41,12 @@ class Connection extends AdapterConnection
         parent::query($sql, $bind);
     }
 
-    public function useRole(string $roleName): void
+    public function useRole(string $roleName, bool $forceUse = false): void
     {
         if ($roleName === 'ACCOUNTADMIN') {
             $roleName = $this->defaultRole;
         }
-        if ($roleName === $this->actualRole) {
+        if ($roleName === $this->actualRole && !$forceUse) {
             return;
         }
         $this->query(sprintf('USE ROLE %s;', Helper::quoteIdentifier($roleName)));

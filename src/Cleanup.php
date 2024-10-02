@@ -89,7 +89,32 @@ class Cleanup
     {
         $sqls = [];
         $currentRole = $this->config->getTargetSnowflakeRole();
-        $this->destinationConnection->grantRoleToUser($this->config->getTargetSnowflakeUser(), $mainRoleName);
+
+        $mainRole = $this->destinationConnection->fetchAll(sprintf(
+            'SHOW ROLES LIKE %s',
+            QueryBuilder::quote($mainRoleName),
+        ));
+        $grantsToTargetUser = $this->destinationConnection->fetchAll(sprintf(
+            'SHOW GRANTS TO USER %s',
+            QueryBuilder::quoteIdentifier($this->config->getTargetSnowflakeUser()),
+        ));
+        $mainRoleExistsOnTargetUser = array_filter(
+            $grantsToTargetUser,
+            fn($v) => $v['role'] === $mainRoleName,
+        );
+
+        $hasMainRoleOwnership = array_filter(
+            $mainRole,
+            fn($v) => $v['owner'] === $this->config->getTargetSnowflakeUser()
+        );
+
+        if (!$mainRoleExistsOnTargetUser && !$hasMainRoleOwnership) {
+            throw new UserException('Main role is exists but not assign to migrate user.');
+        }
+
+        if (!$mainRoleExistsOnTargetUser) {
+            $this->destinationConnection->grantRoleToUser($this->config->getTargetSnowflakeUser(), $mainRoleName);
+        }
         foreach ($this->config->getDatabases() as $database) {
             $this->destinationConnection->useRole($this->config->getTargetSnowflakeRole());
 
@@ -107,11 +132,13 @@ class Cleanup
             foreach ($data['USER'] ?? [] as $user) {
                 if ($user['granted_by'] !== $currentRole) {
                     $currentRole = $user['granted_by'];
-                    $sqls[] = sprintf(
-                        'GRANT ROLE %s TO USER %s;',
-                        Helper::quoteIdentifier($currentRole),
-                        Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
-                    );
+                    if ($currentRole === $mainRoleName && !$mainRoleExistsOnTargetUser) {
+                        $sqls[] = sprintf(
+                            'GRANT ROLE %s TO USER %s;',
+                            Helper::quoteIdentifier($currentRole),
+                            Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
+                        );
+                    }
                     $sqls[] = sprintf('USE ROLE %s;', Helper::quoteIdentifier($currentRole));
                 }
 
@@ -126,11 +153,13 @@ class Cleanup
                     $sqls[] = sprintf('USE ROLE %s;', Helper::quoteIdentifier($currentRole));
                 }
                 $this->destinationConnection->useRole($mainRoleName);
-                $this->destinationConnection->query(sprintf(
-                    'GRANT ROLE %s TO USER %s;',
-                    Helper::quoteIdentifier($currentRole),
-                    Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
-                ));
+                if ($currentRole === $mainRoleName && !$mainRoleExistsOnTargetUser) {
+                    $this->destinationConnection->query(sprintf(
+                        'GRANT ROLE %s TO USER %s;',
+                        Helper::quoteIdentifier($currentRole),
+                        Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
+                    ));
+                }
                 $this->destinationConnection->useRole($role['granted_by']);
 
                 /** @var FutureGrantToRole[] $futureGrants */
@@ -156,15 +185,17 @@ class Cleanup
 
             if ($projectUser->getGrantedBy() !== $currentRole) {
                 $currentRole = $projectUser->getGrantedBy();
-                $sqls[] = sprintf(
-                    'USE ROLE %s;',
-                    Helper::quoteIdentifier($this->config->getTargetSnowflakeRole())
-                );
-                $sqls[] = sprintf(
-                    'GRANT ROLE %s TO USER %s;',
-                    Helper::quoteIdentifier($currentRole),
-                    Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
-                );
+                if ($currentRole === $mainRoleName && !$mainRoleExistsOnTargetUser) {
+                    $sqls[] = sprintf(
+                        'USE ROLE %s;',
+                        Helper::quoteIdentifier($this->config->getTargetSnowflakeRole())
+                    );
+                    $sqls[] = sprintf(
+                        'GRANT ROLE %s TO USER %s;',
+                        Helper::quoteIdentifier($currentRole),
+                        Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
+                    );
+                }
                 $sqls[] = sprintf('USE ROLE %s;', Helper::quoteIdentifier($currentRole));
             }
             $sqls[] = sprintf(
@@ -198,10 +229,7 @@ class Cleanup
             throw new UserException('!!! PLEASE RUN SQLS ON TARGET SNOWFLAKE ACCOUNT !!!');
         }
 
-        $this->destinationConnection->query(sprintf(
-            'USE ROLE %s',
-            Helper::quoteIdentifier($this->config->getTargetSnowflakeRole())
-        ));
+        $this->destinationConnection->useRole($this->config->getTargetSnowflakeRole(), true);
     }
 
     public function postMigration(): void
