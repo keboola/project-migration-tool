@@ -266,22 +266,23 @@ class MigrateStructure
     {
         $user = $mainRole = $mainRoleWithGrants->getName();
 
-        $mainRoleExists = $this->destinationConnection->fetchAll(sprintf(
+        $mainRoleExists = count($this->destinationConnection->fetchAll(sprintf(
             'SHOW ROLES LIKE %s',
             QueryBuilder::quote($mainRole),
-        ));
+        ))) > 0;
         if ($mainRoleExists) {
             $grantsToTargetUser = $this->destinationConnection->fetchAll(sprintf(
                 'SHOW GRANTS TO USER %s',
                 QueryBuilder::quoteIdentifier($this->config->getTargetSnowflakeUser()),
             ));
-            $mainRoleExistsOnTargetUser = array_filter(
+            $mainRoleExistsOnTargetUser = array_reduce(
                 $grantsToTargetUser,
-                fn($v) => $v['role'] === $mainRole,
+                fn ($found, $v) => $found || $v['role'] === $mainRole,
+                false,
             );
 
             if (!$mainRoleExistsOnTargetUser) {
-                throw new UserException('Main role is exists but not assign to migrate user.');
+                throw new UserException('Main role exists but is not assigned to migrate user.');
             }
             return;
         }

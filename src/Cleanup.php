@@ -98,18 +98,20 @@ class Cleanup
             'SHOW GRANTS TO USER %s',
             QueryBuilder::quoteIdentifier($this->config->getTargetSnowflakeUser()),
         ));
-        $mainRoleExistsOnTargetUser = array_filter(
+        $mainRoleExistsOnTargetUser = array_reduce(
             $grantsToTargetUser,
-            fn($v) => $v['role'] === $mainRoleName,
+            fn ($found, $v) => $found || $v['role'] === $mainRoleName,
+            false,
         );
 
-        $hasMainRoleOwnership = array_filter(
+        $hasMainRoleOwnership = array_reduce(
             $mainRole,
-            fn($v) => $v['owner'] === $this->config->getTargetSnowflakeUser()
+            fn ($found, $v) => $found || $v['owner'] === $this->config->getTargetSnowflakeUser(),
+            false,
         );
 
-        if (!$mainRoleExistsOnTargetUser && !$hasMainRoleOwnership) {
-            throw new UserException('Main role is exists but not assign to migrate user.');
+        if ($mainRoleExistsOnTargetUser && !$hasMainRoleOwnership) {
+            throw new UserException('Main role exists but is not assigned to migrate user.');
         }
 
         if (!$mainRoleExistsOnTargetUser) {
