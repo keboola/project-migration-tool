@@ -110,11 +110,12 @@ class Cleanup
             false,
         );
 
-        if ($mainRoleExistsOnTargetUser && !$hasMainRoleOwnership) {
-            throw new UserException('Main role exists but is not assigned to migrate user.');
-        }
-
         if (!$mainRoleExistsOnTargetUser) {
+            if (!$hasMainRoleOwnership) {
+                throw new UserException(
+                    'Main role exists but is not assigned to migrate user and cannot be granted.',
+                );
+            }
             $this->destinationConnection->grantRoleToUser($this->config->getTargetSnowflakeUser(), $mainRoleName);
         }
         foreach ($this->config->getDatabases() as $database) {
