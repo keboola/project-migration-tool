@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ProjectMigrationTool\Snowflake;
 
 use Keboola\SnowflakeDbAdapter\QueryBuilder;
+use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\ValueObject\FutureGrantToRole;
 use ProjectMigrationTool\ValueObject\GrantToRole;
 use ProjectMigrationTool\ValueObject\RoleFutureGrants;
@@ -15,7 +16,7 @@ class Helper
     /**
      * @param GrantToRole[] $grants
      */
-    public static function parseGrantsToObjects(array $grants): RoleGrants
+    public static function parseGrantsToObjects(array $grants, Config $config): RoleGrants
     {
         $roleGrants = new RoleGrants();
 
@@ -37,7 +38,11 @@ class Helper
                     $roleGrants->addAccountGrant($grant);
                     break;
                 case 'WAREHOUSE':
-                    $roleGrants->addWarehouseGrant($grant);
+                    $roleGrants->addWarehouseGrant(
+                        $grant,
+                        $config->getSourceSnowflakeWarehouse(),
+                        $config->getTargetSnowflakeWarehouse(),
+                    );
                     break;
                 case 'USER':
                     $roleGrants->addUserGrant($grant);

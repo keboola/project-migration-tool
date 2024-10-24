@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ProjectMigrationTool;
 
 use Keboola\SnowflakeDbAdapter\QueryBuilder;
+use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Snowflake\Helper;
 use ProjectMigrationTool\ValueObject\FutureGrantToRole;
 use ProjectMigrationTool\ValueObject\GrantToRole;
@@ -15,14 +16,14 @@ class MetadataFetcher
 {
     public function __construct(
         readonly Snowflake\Connection $sourceConnection,
-        readonly array $databases,
+        readonly Config $config,
     ) {
     }
 
     public function getMainRoleWithGrants(): Role
     {
         $grantsOfRoles = [];
-        foreach ($this->databases as $database) {
+        foreach ($this->config->getDatabases() as $database) {
             $roleName = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
 
             $grantedOnDatabaseRole = array_map(
@@ -56,7 +57,7 @@ class MetadataFetcher
             ))
         );
 
-        $mainRole->setGrants(Helper::parseGrantsToObjects($grants));
+        $mainRole->setGrants(Helper::parseGrantsToObjects($grants, $this->config));
 
         return $mainRole;
     }
@@ -64,7 +65,7 @@ class MetadataFetcher
     public function getRolesWithGrants(): array
     {
         $tmp = [];
-        foreach ($this->databases as $database) {
+        foreach ($this->config->getDatabases() as $database) {
             $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
 
             $rolesResult = $this->sourceConnection->fetchAll(
@@ -97,7 +98,7 @@ class MetadataFetcher
                     ))
                 );
 
-                $role->setGrants(Helper::parseGrantsToObjects($grants));
+                $role->setGrants(Helper::parseGrantsToObjects($grants, $this->config));
                 $role->setFutureGrants(Helper::parseFutureGrantsToObjects($futureGrants));
                 $projectRoles->addRole($role);
             }
