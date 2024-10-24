@@ -69,9 +69,24 @@ class RoleGrants
         $this->roleGrants[] = $grant;
     }
 
-    public function addWarehouseGrant(GrantToRole $grant): void
+    public function addWarehouseGrant(GrantToRole $grant, string $sourceWarehouseName, string $targetWarehouseName): void
     {
         assert($grant->getGrantedOn() === 'WAREHOUSE', 'Grant is not on WAREHOUSE');
+        if ($sourceWarehouseName !== $targetWarehouseName AND str_starts_with($grant->getName(), $sourceWarehouseName)) {
+            $grant = GrantToRole::fromArray([
+                'name' => preg_replace(
+                    sprintf('/^%s/', $sourceWarehouseName),
+                    $targetWarehouseName,
+                    $grant->getName(),
+                ),
+                'privilege' => $grant->getPrivilege(),
+                'granted_on' => $grant->getGrantedOn(),
+                'granted_to' => $grant->getGrantedTo(),
+                'grantee_name' => $grant->getGranteeName(),
+                'grant_option' => $grant->getGrantOption(),
+                'granted_by' => $grant->getGrantedBy(),
+            ]);
+        }
         $this->warehouseGrants[] = $grant;
     }
 
