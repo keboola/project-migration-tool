@@ -69,10 +69,13 @@ class RoleGrants
         $this->roleGrants[] = $grant;
     }
 
-    public function addWarehouseGrant(GrantToRole $grant, string $sourceWarehouseName, string $targetWarehouseName): void
-    {
+    public function addWarehouseGrant(
+        GrantToRole $grant,
+        string $sourceWarehouseName,
+        string $targetWarehouseName,
+    ): void {
         assert($grant->getGrantedOn() === 'WAREHOUSE', 'Grant is not on WAREHOUSE');
-        if ($sourceWarehouseName !== $targetWarehouseName AND str_starts_with($grant->getName(), $sourceWarehouseName)) {
+        if ($sourceWarehouseName !== $targetWarehouseName && str_starts_with($grant->getName(), $sourceWarehouseName)) {
             $grant = GrantToRole::fromArray([
                 'name' => preg_replace(
                     sprintf('/^%s/', $sourceWarehouseName),
