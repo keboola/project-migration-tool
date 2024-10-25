@@ -28,10 +28,17 @@ class MigrationChecker
         $warehouses = $mainRoleWithGrants->getAssignedGrants()->getWarehouseGrants();
 
         assert(count($warehouses) > 0);
-        $useWarehouse = sprintf('USE WAREHOUSE %s', Helper::quoteIdentifier(current($warehouses)->getName()));
+        $useWarehouseSource = sprintf(
+            'USE WAREHOUSE %s',
+            Helper::quoteIdentifier($this->config->getSourceSnowflakeWarehouse()),
+        );
+        $useWarehouseDestination = sprintf(
+            'USE WAREHOUSE %s',
+            Helper::quoteIdentifier(current($warehouses)->getName()),
+        );
 
-        $this->sourceConnection->query($useWarehouse);
-        $this->destinationConnection->query($useWarehouse);
+        $this->sourceConnection->query($useWarehouseSource);
+        $this->destinationConnection->query($useWarehouseDestination);
 
         foreach ($this->databases as $database) {
             $this->logger->info(sprintf('Checking database %s', $database));
