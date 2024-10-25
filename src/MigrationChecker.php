@@ -43,8 +43,28 @@ class MigrationChecker
                 $rolesAndUsers,
                 ['users' => [$databaseRole], 'roles' => [$databaseRole]]
             );
+
             $compares = [];
             // phpcs:disable Generic.Files.LineLength
+            // Compare TABLES
+            $compares[] = [
+                'group' => 'Tables',
+                'itemNameKey' => 'TABLE_NAME',
+                'sql' => sprintf(
+                    'SELECT %s FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES WHERE DELETED IS NULL AND TABLE_CATALOG = %s ORDER BY TABLE_SCHEMA, TABLE_NAME;',
+                    implode(',', [
+                        'CONCAT(TABLE_SCHEMA, \'.\', TABLE_NAME) AS ID',
+                        'TABLE_NAME',
+                        'TABLE_SCHEMA',
+                        'TABLE_OWNER',
+                        'TABLE_TYPE',
+                        'ROW_COUNT',
+                        // 'BYTES',
+                    ]),
+                    QueryBuilder::quote($database)
+                ),
+            ];
+
             // Compare USERS
             $compares[] = [
                 'group' => 'Users',
@@ -122,43 +142,10 @@ class MigrationChecker
                     implode(', ', array_map(fn($v) => QueryBuilder::quote($v), $rolesAndUsers['roles']))
                 ),
             ];
-            // Compare TABLES
-            $schemas = $this->sourceConnection->fetchAll(sprintf(
-                'SHOW SCHEMAS IN DATABASE %s',
-                Helper::quoteIdentifier($database)
-            ));
-            foreach ($schemas as $schema) {
-                $tables = $this->sourceConnection->fetchAll(sprintf(
-                    'SHOW TABLES IN SCHEMA %s.%s',
-                    Helper::quoteIdentifier($database),
-                    Helper::quoteIdentifier($schema['name'])
-                ));
-                foreach ($tables as $table) {
-                    $compares[] = [
-                        'group' => sprintf('Table: %s.%s.%s', $database, $schema['name'], $table['name']),
-                        'itemNameKey' => 'ID',
-                        'sql' => sprintf(
-                            'SELECT \'%s.%s.%s\' AS ID, count(*) AS ROW_COUNT FROM %s.%s.%s',
-                            Helper::quoteIdentifier($database),
-                            Helper::quoteIdentifier($schema['name']),
-                            Helper::quoteIdentifier($table['name']),
-                            Helper::quoteIdentifier($database),
-                            Helper::quoteIdentifier($schema['name']),
-                            Helper::quoteIdentifier($table['name'])
-                        ),
-                        'role' => $databaseRole,
-                    ];
-                }
-            }
             // phpcs:enable Generic.Files.LineLength
 
             foreach ($compares as $compare) {
-                $this->compareData(
-                    $compare['group'],
-                    $compare['itemNameKey'],
-                    $compare['sql'],
-                    array_key_exists('role', $compare) ? $compare['role'] : null
-                );
+                $this->compareData($compare['group'], $compare['itemNameKey'], $compare['sql']);
             }
         }
     }
@@ -299,12 +286,8 @@ class MigrationChecker
         }
     }
 
-    private function compareData(string $group, string $itemNameKey, string $sql, ?string $role = null): void
+    private function compareData(string $group, string $itemNameKey, string $sql): void
     {
-        if ($role) {
-            $this->sourceConnection->useRole($role);
-            $this->destinationConnection->useRole($role);
-        }
         $this->logger->info(sprintf('Getting source data for "%s".', $group));
         $sourceData = $this->sourceConnection->fetchAll($sql);
         $this->logger->info(sprintf('Getting target data for "%s".', $group));
