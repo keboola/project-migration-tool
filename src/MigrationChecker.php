@@ -29,10 +29,12 @@ class MigrationChecker
 
         assert(count($warehouses) > 0);
         $useWarehouseSource = sprintf(
-            'USE WAREHOUSE %s', Helper::quoteIdentifier($this->config->getSourceSnowflakeWarehouse()),
+            'USE WAREHOUSE %s',
+            Helper::quoteIdentifier($this->config->getSourceSnowflakeWarehouse()),
         );
         $useWarehouseDestination = sprintf(
-            'USE WAREHOUSE %s', Helper::quoteIdentifier(current($warehouses)->getName()),
+            'USE WAREHOUSE %s',
+            Helper::quoteIdentifier(current($warehouses)->getName()),
         );
 
         $this->sourceConnection->query($useWarehouseSource);
