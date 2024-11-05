@@ -106,7 +106,7 @@ class Cleanup
 
         $hasMainRoleOwnership = array_reduce(
             $mainRole,
-            fn ($found, $v) => $found || $v['owner'] === $this->config->getTargetSnowflakeUser(),
+            fn ($found, $v) => $found || $v['owner'] === $this->config->getTargetSnowflakeRole(),
             false,
         );
 
