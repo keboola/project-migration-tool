@@ -106,7 +106,7 @@ class Cleanup
 
         $hasMainRoleOwnership = array_reduce(
             $mainRole,
-            fn ($found, $v) => $found || $v['owner'] === $this->config->getTargetSnowflakeUser(),
+            fn ($found, $v) => $found || $v['owner'] === $this->config->getTargetSnowflakeRole(),
             false,
         );
 
@@ -157,13 +157,20 @@ class Cleanup
                 }
                 $this->destinationConnection->useRole($mainRoleName);
                 if ($currentRole === $mainRoleName && !$mainRoleExistsOnTargetUser) {
-                    $this->destinationConnection->query(sprintf(
-                        'GRANT ROLE %s TO USER %s;',
-                        Helper::quoteIdentifier($currentRole),
-                        Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
-                    ));
+                    $this->destinationConnection->grantRoleToUser(
+                        $this->config->getTargetSnowflakeUser(),
+                        $currentRole,
+                    );
                 }
-                $this->destinationConnection->useRole($role['granted_by']);
+                try {
+                    $this->destinationConnection->useRole($role['granted_by']);
+                } catch (RuntimeException $e) {
+                    $this->destinationConnection->grantRoleToUser(
+                        $this->config->getTargetSnowflakeUser(),
+                        $role['granted_by'],
+                    );
+                    $this->destinationConnection->useRole($role['granted_by']);
+                }
 
                 /** @var FutureGrantToRole[] $futureGrants */
                 $futureGrants = array_map(
