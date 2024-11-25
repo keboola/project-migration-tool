@@ -747,7 +747,14 @@ SQL;
                 ->getRole($ownershipRole->getGrantedBy())
                 ->getAssignedGrants()
                 ->getWarehouseGrants();
-            $this->destinationConnection->useWarehouse(current($warehouseGrants)->getName());
+
+            $warehouseName = current($warehouseGrants)->getName();
+            try {
+                $this->destinationConnection->useWarehouse($warehouseName);
+            } catch (Throwable $e) {
+                $warehouseName = str_ireplace(['_SMALL', '_MEDIUM', '_LARGE'], '', $warehouseName);
+                $this->destinationConnection->useWarehouse($warehouseName);
+            }
 
             $this->destinationConnection->useRole($ownershipRole->getGrantedBy());
 
