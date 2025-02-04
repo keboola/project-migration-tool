@@ -140,17 +140,25 @@ class Cleanup
 
             if (!$dbExists) {
                 $this->logger->info(sprintf('Database %s does not exist, checking for role with same name', $database));
-                // If database doesn't exist, check if there's a role with the same name
-                $roleExists = $this->destinationConnection->fetchAll(sprintf(
-                    'SHOW ROLES LIKE %s;',
-                    QueryBuilder::quote($database)
-                ));
+                // Check if role exists with exact or lowercase name
+                $roleName = null;
+                foreach ([$database, strtolower($database)] as $nameVariant) {
+                    $roleExists = $this->destinationConnection->fetchAll(sprintf(
+                        'SHOW ROLES LIKE %s',
+                        QueryBuilder::quote($nameVariant)
+                    ));
+                    if ($roleExists) {
+                        $roleName = $nameVariant;
+                        break;
+                    }
+                }
 
-                if (!$roleExists) {
+                if ($roleName === null) {
                     continue;
                 }
-                $dataToRemove = $this->getDataToRemove($this->destinationConnection, $database);
-                $roleToRemove = $database;
+
+                $dataToRemove = $this->getDataToRemove($this->destinationConnection, $roleName);
+                $roleToRemove = $roleName;
             } else {
                 $this->logger->info(sprintf('Database %s exists, getting ownership role', $database));
                 $databaseRole = $this->destinationConnection->getOwnershipRoleOnDatabase($database);
