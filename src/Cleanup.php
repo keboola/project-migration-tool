@@ -17,6 +17,10 @@ use Psr\Log\LoggerInterface;
 
 class Cleanup
 {
+    private const OWNERSHIP = 'OWNERSHIP';
+    private const USER = 'USER';
+    private const ROLE = 'ROLE';
+
     public function __construct(
         readonly Config $config,
         readonly Connection $sourceConnection,
@@ -87,13 +91,12 @@ class Cleanup
 
     public function preMigration(string $mainRoleName): void
     {
+        $this->logger->info(sprintf('Starting pre-migration cleanup with main role: %s', $mainRoleName));
         $sqls = [];
-        $currentRole = $this->config->getTargetSnowflakeRole();
+        $currentRole = null;
 
-        $mainRole = $this->destinationConnection->fetchAll(sprintf(
-            'SHOW ROLES LIKE %s',
-            QueryBuilder::quote($mainRoleName),
-        ));
+        // Check if main role is assigned to target user
+        $this->logger->info('Checking main role assignment and ownership');
         $grantsToTargetUser = $this->destinationConnection->fetchAll(sprintf(
             'SHOW GRANTS TO USER %s',
             QueryBuilder::quoteIdentifier($this->config->getTargetSnowflakeUser()),
@@ -104,6 +107,11 @@ class Cleanup
             false,
         );
 
+        // Check if target role has ownership of main role
+        $mainRole = $this->destinationConnection->fetchAll(sprintf(
+            'SHOW ROLES LIKE %s',
+            QueryBuilder::quote($mainRoleName),
+        ));
         $hasMainRoleOwnership = array_reduce(
             $mainRole,
             fn ($found, $v) => $found || $v['owner'] === $this->config->getTargetSnowflakeRole(),
@@ -118,116 +126,105 @@ class Cleanup
             }
             $this->destinationConnection->grantRoleToUser($this->config->getTargetSnowflakeUser(), $mainRoleName);
         }
+
+        // Process each database
         foreach ($this->config->getDatabases() as $database) {
+            $this->logger->info(sprintf('Processing database: %s', $database));
             $this->destinationConnection->useRole($this->config->getTargetSnowflakeRole());
 
+            // Check if database exists
             $dbExists = $this->destinationConnection->fetchAll(sprintf(
                 'SHOW DATABASES LIKE %s;',
                 QueryBuilder::quote($database)
             ));
+
             if (!$dbExists) {
-                continue;
-            }
-            $databaseRole = $this->destinationConnection->getOwnershipRoleOnDatabase($database);
-            $data = $this->getDataToRemove($this->destinationConnection, $databaseRole);
+                $this->logger->info(sprintf('Database %s does not exist, checking for role with same name', $database));
+                // If database doesn't exist, check if there's a role with the same name
+                $roleExists = $this->destinationConnection->fetchAll(sprintf(
+                    'SHOW ROLES LIKE %s;',
+                    QueryBuilder::quote($database)
+                ));
 
-            $currentUser = $this->destinationConnection->fetchAll('SELECT CURRENT_USER() AS "user";');
-            foreach ($data['USER'] ?? [] as $user) {
-                if ($user['granted_by'] !== $currentRole) {
-                    $currentRole = $user['granted_by'];
-                    if ($currentRole === $mainRoleName && !$mainRoleExistsOnTargetUser) {
-                        $sqls[] = sprintf(
-                            'GRANT ROLE %s TO USER %s;',
-                            Helper::quoteIdentifier($currentRole),
-                            Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
-                        );
-                    }
-                    $sqls[] = sprintf('USE ROLE %s;', Helper::quoteIdentifier($currentRole));
+                if (!$roleExists) {
+                    continue;
                 }
-
-                if ($currentUser[0]['user'] !== $user['name']) {
-                    $sqls[] = sprintf('DROP USER IF EXISTS %s;', Helper::quoteIdentifier($user['name']));
-                }
+                $dataToRemove = $this->getDataToRemove($this->destinationConnection, $database);
+                $roleToRemove = $database;
+            } else {
+                $this->logger->info(sprintf('Database %s exists, getting ownership role', $database));
+                $databaseRole = $this->destinationConnection->getOwnershipRoleOnDatabase($database);
+                $dataToRemove = $this->getDataToRemove($this->destinationConnection, $databaseRole);
+                $roleToRemove = $databaseRole;
             }
 
-            foreach ($data['ROLE'] ?? [] as $role) {
-                if ($role['granted_by'] !== $currentRole) {
-                    $currentRole = $role['granted_by'];
-                    $sqls[] = sprintf('USE ROLE %s;', Helper::quoteIdentifier($currentRole));
-                }
-                $this->destinationConnection->useRole($mainRoleName);
-                if ($currentRole === $mainRoleName && !$mainRoleExistsOnTargetUser) {
-                    $this->destinationConnection->grantRoleToUser(
-                        $this->config->getTargetSnowflakeUser(),
-                        $currentRole,
-                    );
-                }
-                try {
-                    $this->destinationConnection->useRole($role['granted_by']);
-                } catch (RuntimeException $e) {
-                    $this->destinationConnection->grantRoleToUser(
-                        $this->config->getTargetSnowflakeUser(),
-                        $role['granted_by'],
-                    );
-                    $this->destinationConnection->useRole($role['granted_by']);
-                }
+            // First revoke all future grants from roles
+            foreach ($dataToRemove['ROLE'] as $role) {
+                $this->switchRole($role['granted_by'], $mainRoleName, $sqls, $currentRole);
 
-                /** @var FutureGrantToRole[] $futureGrants */
                 $futureGrants = array_map(
                     fn(array $v) => FutureGrantToRole::fromArray($v),
                     $this->destinationConnection->fetchAll(sprintf(
                         'SHOW FUTURE GRANTS TO ROLE %s',
-                        $role['name']
+                        Helper::quoteIdentifier($role['name'])
                     ))
                 );
+
                 foreach ($futureGrants as $futureGrant) {
                     $sqls[] = sprintf(
                         'REVOKE %s ON FUTURE TABLES IN SCHEMA %s FROM ROLE %s;',
                         $futureGrant->getPrivilege(),
                         $futureGrant->getName(),
-                        Helper::quoteIdentifier($futureGrant->getGranteeName()),
+                        Helper::quoteIdentifier($futureGrant->getGranteeName())
                     );
                 }
-                $sqls[] = sprintf('DROP ROLE IF EXISTS %s;', Helper::quoteIdentifier($role['name']));
             }
 
-            $projectUser = $this->getProjectUser($databaseRole);
-
-            if ($projectUser->getGrantedBy() !== $currentRole) {
-                $currentRole = $projectUser->getGrantedBy();
-                if ($currentRole === $mainRoleName && !$mainRoleExistsOnTargetUser) {
-                    $sqls[] = sprintf(
-                        'USE ROLE %s;',
-                        Helper::quoteIdentifier($this->config->getTargetSnowflakeRole())
-                    );
-                    $sqls[] = sprintf(
-                        'GRANT ROLE %s TO USER %s;',
-                        Helper::quoteIdentifier($currentRole),
-                        Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
-                    );
-                }
-                $sqls[] = sprintf('USE ROLE %s;', Helper::quoteIdentifier($currentRole));
+            // Drop users owned by roles
+            if (!empty($dataToRemove['USER'])) {
+                $this->logger->info(sprintf('Dropping %d users', count($dataToRemove['USER'])));
             }
+            foreach ($dataToRemove['USER'] as $user) {
+                $this->switchRole($user['granted_by'], $mainRoleName, $sqls, $currentRole);
+                $sqls[] = sprintf(
+                    'DROP USER IF EXISTS %s;',
+                    Helper::quoteIdentifier($user['name'])
+                );
+            }
+
+            // Drop roles
+            if (!empty($dataToRemove['ROLE'])) {
+                $this->logger->info(sprintf('Dropping %d roles', count($dataToRemove['ROLE'])));
+            }
+            foreach ($dataToRemove['ROLE'] as $role) {
+                $this->switchRole($role['granted_by'], $mainRoleName, $sqls, $currentRole);
+                $sqls[] = sprintf(
+                    'DROP ROLE IF EXISTS %s;',
+                    Helper::quoteIdentifier($role['name'])
+                );
+            }
+
+            // Drop database role and handle database if exists
+            $this->switchRole($this->config->getTargetSnowflakeRole(), $mainRoleName, $sqls, $currentRole);
             $sqls[] = sprintf(
-                'DROP USER IF EXISTS %s;',
-                Helper::quoteIdentifier($projectUser->getGranteeName())
+                'DROP ROLE IF EXISTS %s;',
+                Helper::quoteIdentifier($roleToRemove)
             );
 
-            $sqls[] = sprintf('DROP ROLE IF EXISTS %s;', Helper::quoteIdentifier($databaseRole));
-
-            $sqls[] = sprintf(
-                'DROP DATABASE IF EXISTS %s;',
-                Helper::quoteIdentifier($database . '_OLD')
-            );
-
-            $sqls[] = sprintf(
-                'ALTER DATABASE IF EXISTS %s RENAME TO %s;',
-                Helper::quoteIdentifier($database),
-                Helper::quoteIdentifier($database . '_OLD'),
-            );
+            if ($dbExists) {
+                $sqls[] = sprintf(
+                    'DROP DATABASE IF EXISTS %s;',
+                    Helper::quoteIdentifier($database . '_OLD')
+                );
+                $sqls[] = sprintf(
+                    'ALTER DATABASE IF EXISTS %s RENAME TO %s;',
+                    Helper::quoteIdentifier($database),
+                    Helper::quoteIdentifier($database . '_OLD')
+                );
+            }
         }
 
-        $this->destinationConnection->useRole($mainRoleName);
+        // Execute all SQL commands
         foreach ($sqls as $sql) {
             if ($this->config->getSynchronizeDryPremigrationCleanupRun()) {
                 $this->logger->info($sql);
@@ -235,6 +232,7 @@ class Cleanup
                 $this->destinationConnection->query($sql);
             }
         }
+
         if ($this->config->getSynchronizeDryPremigrationCleanupRun() && $sqls) {
             throw new UserException('!!! PLEASE RUN SQLS ON TARGET SNOWFLAKE ACCOUNT !!!');
         }
@@ -297,36 +295,108 @@ class Cleanup
         }
     }
 
-    private function getDataToRemove(Connection $connection, string $role): array
+    private function switchRole(string $role, string $mainRoleName, array &$sqls, ?string &$currentRole): void
     {
-        $grants = $connection->fetchAll(sprintf(
-            'SHOW GRANTS TO ROLE %s',
-            Helper::quoteIdentifier($role)
-        ));
-
-        $filteredGrants = array_filter($grants, function ($v) {
-            $usageWarehouse = $v['privilege'] === 'USAGE' && $v['granted_on'] === 'WAREHOUSE';
-            $ownership = $v['privilege'] === 'OWNERSHIP' && (in_array($v['granted_on'], ['USER', 'ROLE']));
-
-            return $ownership || $usageWarehouse;
-        });
-
-        $mapGrants = [];
-        foreach ($filteredGrants as $filteredGrant) {
-            $mapGrants[$filteredGrant['granted_on']][$filteredGrant['name']] = $filteredGrant;
+        if ($currentRole === $role) {
+            return;
         }
 
-        if (isset($mapGrants['ROLE'])) {
-            $roleGrants = $mapGrants['ROLE'];
-            foreach ($roleGrants as $roleGrant) {
-                $mapGrants = array_merge_recursive(
-                    $this->getDataToRemove($connection, $roleGrant['name']),
-                    $mapGrants,
-                );
+        try {
+            $this->logger->debug(sprintf('Switching to role: %s', $role));
+            $this->destinationConnection->useRole($role);
+            $sqls[] = sprintf('USE ROLE %s;', Helper::quoteIdentifier($role));
+            $currentRole = $role;
+        } catch (RuntimeException $e) {
+            $this->logger->info(sprintf(
+                'Cannot switch directly to role %s, trying through main role %s',
+                $role,
+                $mainRoleName
+            ));
+            $this->destinationConnection->useRole($mainRoleName);
+            if ($currentRole !== $mainRoleName) {
+                $sqls[] = sprintf('USE ROLE %s;', Helper::quoteIdentifier($mainRoleName));
+                $currentRole = $mainRoleName;
+            }
+            $this->destinationConnection->grantRoleToUser(
+                $this->config->getTargetSnowflakeUser(),
+                $role
+            );
+            $this->logger->debug(sprintf('Granted role %s to user, switching to it', $role));
+            $this->destinationConnection->useRole($role);
+            $sqls[] = sprintf('USE ROLE %s;', Helper::quoteIdentifier($role));
+            $currentRole = $role;
+        }
+    }
+
+    private function getDataToRemove(Connection $connection, string $name): array
+    {
+        $this->logger->debug(sprintf('Getting data to remove for: %s', $name));
+        $result = [
+            self::ROLE => [],
+            self::USER => [],
+        ];
+
+        // Get all grants for the name (both as role and user)
+        $grants = $connection->fetchAll(sprintf(
+            'SHOW GRANTS TO ROLE %s',
+            Helper::quoteIdentifier($name)
+        ));
+
+        if (empty($grants)) {
+            $this->logger->debug('No grants found, checking if it is a user');
+            // Check if it's a user
+            $userExists = $connection->fetchAll(sprintf(
+                'SHOW USERS LIKE %s',
+                QueryBuilder::quote($name)
+            ));
+            if ($userExists) {
+                $this->logger->debug('User found, adding to removal list');
+                $userExists[0]['granted_by'] = $this->config->getTargetSnowflakeRole();
+                $result[self::USER][$name] = $userExists[0];
+            }
+            return $result;
+        }
+
+        $this->logger->debug('Processing grants');
+        // Filter grants by ownership
+        $ownershipGrants = array_filter(
+            $grants,
+            fn($v) => $v['privilege'] === self::OWNERSHIP
+        );
+
+        // Process owned roles and their users
+        foreach ($ownershipGrants as $grant) {
+            if ($grant['granted_on'] === self::ROLE) {
+                $this->logger->debug(sprintf('Found owned role: %s', $grant['name']));
+                $result[self::ROLE][$grant['name']] = $grant;
+
+                // Get users owned by this role
+                $roleGrants = $connection->fetchAll(sprintf(
+                    'SHOW GRANTS TO ROLE %s',
+                    Helper::quoteIdentifier($grant['name'])
+                ));
+
+                foreach (array_filter(
+                    $roleGrants,
+                    fn($v) => $v['privilege'] === self::OWNERSHIP && $v['granted_on'] === self::USER
+                ) as $userGrant) {
+                    $this->logger->debug(
+                        sprintf('Found user owned by role %s: %s', $grant['name'], $userGrant['name'])
+                    );
+                    $result[self::USER][$userGrant['name']] = $userGrant;
+                }
+            } elseif ($grant['granted_on'] === self::USER) {
+                $this->logger->debug(sprintf('Found directly owned user: %s', $grant['name']));
+                $result[self::USER][$grant['name']] = $grant;
             }
         }
 
-        return $mapGrants;
+        $this->logger->debug(sprintf(
+            'Found %d roles and %d users to remove',
+            count($result[self::ROLE]),
+            count($result[self::USER])
+        ));
+        return $result;
     }
 
     private function getProjectUser(string $databaseRole): GrantToUser
