@@ -37,7 +37,14 @@ class Cleanup
             $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
             $projectUser = $this->getProjectUser($databaseRole);
 
-            $data = $this->getDataToRemove($this->sourceConnection, $databaseRole);
+            $grantedOnDatabaseRole = $this->sourceConnection->fetchAll(sprintf(
+                'SHOW GRANTS ON ROLE %s',
+                Helper::quoteIdentifier($databaseRole)
+            ));
+            assert(count($grantedOnDatabaseRole) === 1);
+            $mainRoleName = current($grantedOnDatabaseRole)['granted_by'];
+
+            $data = $this->getDataToRemove($this->sourceConnection, $databaseRole, $mainRoleName);
 
             // drop roles
             $sqls[] = sprintf('DROP ROLE %s;', Helper::quoteIdentifier($databaseRole));
@@ -157,19 +164,16 @@ class Cleanup
                     continue;
                 }
 
-                $dataToRemove = $this->getDataToRemove($this->destinationConnection, $roleName);
-                $roleToRemove = $roleName;
+                $dataToRemove = $this->getDataToRemove($this->destinationConnection, $roleName, $mainRoleName);
             } else {
                 $this->logger->info(sprintf('Database %s exists, getting ownership role', $database));
                 $databaseRole = $this->destinationConnection->getOwnershipRoleOnDatabase($database);
-                $dataToRemove = $this->getDataToRemove($this->destinationConnection, $databaseRole);
-                $roleToRemove = $databaseRole;
+                $dataToRemove = $this->getDataToRemove($this->destinationConnection, $databaseRole, $mainRoleName);
             }
 
             // First revoke all future grants from roles
             foreach ($dataToRemove['ROLE'] as $role) {
-                $this->switchRole($role['granted_by'], $mainRoleName, $sqls, $currentRole);
-
+                $this->destinationConnection->useRole($role['granted_by']);
                 $futureGrants = array_map(
                     fn(array $v) => FutureGrantToRole::fromArray($v),
                     $this->destinationConnection->fetchAll(sprintf(
@@ -178,6 +182,9 @@ class Cleanup
                     ))
                 );
 
+                if ($futureGrants) {
+                    $this->switchRole($role['granted_by'], $mainRoleName, $sqls, $currentRole);
+                }
                 foreach ($futureGrants as $futureGrant) {
                     $sqls[] = sprintf(
                         'REVOKE %s ON FUTURE TABLES IN SCHEMA %s FROM ROLE %s;',
@@ -213,11 +220,7 @@ class Cleanup
             }
 
             // Drop database role and handle database if exists
-            $this->switchRole($this->config->getTargetSnowflakeRole(), $mainRoleName, $sqls, $currentRole);
-            $sqls[] = sprintf(
-                'DROP ROLE IF EXISTS %s;',
-                Helper::quoteIdentifier($roleToRemove)
-            );
+            $this->switchRole($mainRoleName, $mainRoleName, $sqls, $currentRole);
 
             if ($dbExists) {
                 $sqls[] = sprintf(
@@ -336,7 +339,7 @@ class Cleanup
         }
     }
 
-    private function getDataToRemove(Connection $connection, string $name): array
+    private function getDataToRemove(Connection $connection, string $name, string $mainRoleName): array
     {
         $this->logger->debug(sprintf('Getting data to remove for: %s', $name));
         $result = [
@@ -350,21 +353,6 @@ class Cleanup
             Helper::quoteIdentifier($name)
         ));
 
-        if (empty($grants)) {
-            $this->logger->debug('No grants found, checking if it is a user');
-            // Check if it's a user
-            $userExists = $connection->fetchAll(sprintf(
-                'SHOW USERS LIKE %s',
-                QueryBuilder::quote($name)
-            ));
-            if ($userExists) {
-                $this->logger->debug('User found, adding to removal list');
-                $userExists[0]['granted_by'] = $this->config->getTargetSnowflakeRole();
-                $result[self::USER][$name] = $userExists[0];
-            }
-            return $result;
-        }
-
         $this->logger->debug('Processing grants');
         // Filter grants by ownership
         $ownershipGrants = array_filter(
@@ -376,7 +364,7 @@ class Cleanup
         foreach ($ownershipGrants as $grant) {
             if ($grant['granted_on'] === self::ROLE) {
                 $this->logger->debug(sprintf('Found owned role: %s', $grant['name']));
-                $result[self::ROLE][$grant['name']] = $grant;
+                $result[self::ROLE][] = $grant;
 
                 // Get users owned by this role
                 $roleGrants = $connection->fetchAll(sprintf(
@@ -391,19 +379,31 @@ class Cleanup
                     $this->logger->debug(
                         sprintf('Found user owned by role %s: %s', $grant['name'], $userGrant['name'])
                     );
-                    $result[self::USER][$userGrant['name']] = $userGrant;
+                    $result[self::USER][] = $userGrant;
                 }
             } elseif ($grant['granted_on'] === self::USER) {
                 $this->logger->debug(sprintf('Found directly owned user: %s', $grant['name']));
-                $result[self::USER][$grant['name']] = $grant;
+                $result[self::USER][] = $grant;
             }
         }
 
-        $this->logger->debug(sprintf(
-            'Found %d roles and %d users to remove',
-            count($result[self::ROLE]),
-            count($result[self::USER])
+        // Check if user with same name exists
+        $userExists = $connection->fetchAll(sprintf(
+            'SHOW USERS LIKE %s',
+            QueryBuilder::quote($name)
         ));
+        if ($userExists) {
+            $this->logger->debug(sprintf('Found user with same name: %s', $name));
+            $userExists[0]['granted_by'] = $mainRoleName;
+            $result[self::USER][] = $userExists[0];
+        }
+
+        // Add the role itself to be removed
+        $result[self::ROLE][] = [
+            'name' => $name,
+            'granted_by' => $mainRoleName,
+        ];
+
         return $result;
     }
 
