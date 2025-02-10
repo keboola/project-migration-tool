@@ -44,7 +44,7 @@ class Cleanup
             assert(count($grantedOnDatabaseRole) === 1);
             $mainRoleName = current($grantedOnDatabaseRole)['granted_by'];
 
-            $data = $this->getDataToRemove($this->sourceConnection, $databaseRole, $mainRoleName);
+            $data = $this->getDataToRemoveForRole($this->sourceConnection, $databaseRole, $mainRoleName);
 
             // drop roles
             $sqls[] = sprintf('DROP ROLE %s;', Helper::quoteIdentifier($databaseRole));
@@ -110,7 +110,7 @@ class Cleanup
         ));
         $mainRoleExistsOnTargetUser = array_reduce(
             $grantsToTargetUser,
-            fn ($found, $v) => $found || $v[self::ROLE] === $mainRoleName,
+            fn ($found, $v) => $found || $v['role'] === $mainRoleName,
             false,
         );
 
@@ -164,11 +164,11 @@ class Cleanup
                     continue;
                 }
 
-                $dataToRemove = $this->getDataToRemove($this->destinationConnection, $roleName, $mainRoleName);
+                $dataToRemove = $this->getDataToRemoveForRole($this->destinationConnection, $roleName, $mainRoleName);
             } else {
                 $this->logger->info(sprintf('Database %s exists, getting ownership role', $database));
                 $databaseRole = $this->destinationConnection->getOwnershipRoleOnDatabase($database);
-                $dataToRemove = $this->getDataToRemove($this->destinationConnection, $databaseRole, $mainRoleName);
+                $dataToRemove = $this->getDataToRemoveForRole($this->destinationConnection, $databaseRole, $mainRoleName);
             }
 
             // First revoke all future grants from roles
@@ -306,7 +306,7 @@ class Cleanup
         }
     }
 
-    private function getDataToRemove(Connection $connection, string $name, string $mainRoleName): array
+    private function getDataToRemoveForRole(Connection $connection, string $name, string $mainRoleName): array
     {
         $this->logger->debug(sprintf('Getting data to remove for role: %s', $name));
         $result = [
