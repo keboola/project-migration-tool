@@ -168,7 +168,11 @@ class Cleanup
             } else {
                 $this->logger->info(sprintf('Database %s exists, getting ownership role', $database));
                 $databaseRole = $this->destinationConnection->getOwnershipRoleOnDatabase($database);
-                $dataToRemove = $this->getDataToRemoveForRole($this->destinationConnection, $databaseRole, $mainRoleName);
+                $dataToRemove = $this->getDataToRemoveForRole(
+                    $this->destinationConnection,
+                    $databaseRole,
+                    $mainRoleName,
+                );
             }
 
             // First revoke all future grants from roles
