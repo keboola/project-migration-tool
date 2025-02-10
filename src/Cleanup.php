@@ -49,7 +49,7 @@ class Cleanup
             // drop roles
             $sqls[] = sprintf('DROP ROLE %s;', Helper::quoteIdentifier($databaseRole));
 
-            $roles = array_map(fn(array $v) => GrantToRole::fromArray($v), $data['ROLE'] ?? []);
+            $roles = array_map(fn(array $v) => GrantToRole::fromArray($v), $data[self::ROLE] ?? []);
             foreach ($roles as $role) {
                 $futureGrants = array_map(
                     fn(array $v) => FutureGrantToRole::fromArray($v),
@@ -77,7 +77,7 @@ class Cleanup
             // drop users
             $sqls[] = sprintf('DROP USER %s;', Helper::quoteIdentifier($projectUser->getGranteeName()));
 
-            $users = array_map(fn(array $v) => GrantToRole::fromArray($v), $data['USER'] ?? []);
+            $users = array_map(fn(array $v) => GrantToRole::fromArray($v), $data[self::USER] ?? []);
             foreach ($users as $user) {
                 $sqls[] = sprintf(
                     'DROP USER %s;',
@@ -110,7 +110,7 @@ class Cleanup
         ));
         $mainRoleExistsOnTargetUser = array_reduce(
             $grantsToTargetUser,
-            fn ($found, $v) => $found || $v['role'] === $mainRoleName,
+            fn ($found, $v) => $found || $v[self::ROLE] === $mainRoleName,
             false,
         );
 
@@ -172,7 +172,7 @@ class Cleanup
             }
 
             // First revoke all future grants from roles
-            foreach ($dataToRemove['ROLE'] as $role) {
+            foreach ($dataToRemove[self::ROLE] as $role) {
                 $this->destinationConnection->useRole($role['granted_by']);
                 $futureGrants = array_map(
                     fn(array $v) => FutureGrantToRole::fromArray($v),
@@ -196,10 +196,10 @@ class Cleanup
             }
 
             // Drop users owned by roles
-            if (!empty($dataToRemove['USER'])) {
-                $this->logger->info(sprintf('Dropping %d users', count($dataToRemove['USER'])));
+            if (!empty($dataToRemove[self::USER])) {
+                $this->logger->info(sprintf('Dropping %d users', count($dataToRemove[self::USER])));
             }
-            foreach ($dataToRemove['USER'] as $user) {
+            foreach ($dataToRemove[self::USER] as $user) {
                 [$sqls, $currentRole] = $this->switchRole($user['granted_by'], $mainRoleName, $sqls, $currentRole);
                 $sqls[] = sprintf(
                     'DROP USER IF EXISTS %s;',
@@ -208,10 +208,10 @@ class Cleanup
             }
 
             // Drop roles
-            if (!empty($dataToRemove['ROLE'])) {
-                $this->logger->info(sprintf('Dropping %d roles', count($dataToRemove['ROLE'])));
+            if (!empty($dataToRemove[self::ROLE])) {
+                $this->logger->info(sprintf('Dropping %d roles', count($dataToRemove[self::ROLE])));
             }
-            foreach ($dataToRemove['ROLE'] as $role) {
+            foreach ($dataToRemove[self::ROLE] as $role) {
                 [$sqls, $currentRole] = $this->switchRole($role['granted_by'], $mainRoleName, $sqls, $currentRole);
                 $sqls[] = sprintf(
                     'DROP ROLE IF EXISTS %s;',
@@ -308,7 +308,7 @@ class Cleanup
 
     private function getDataToRemove(Connection $connection, string $name, string $mainRoleName): array
     {
-        $this->logger->debug(sprintf('Getting data to remove for: %s', $name));
+        $this->logger->debug(sprintf('Getting data to remove for role: %s', $name));
         $result = [
             self::ROLE => [],
             self::USER => [],
@@ -325,8 +325,7 @@ class Cleanup
         );
 
         $result = $this->processOwnershipGrants($ownershipGrants, $result);
-        $result = $this->addUserIfExists($connection, $name, $mainRoleName, $result);
-        $result = $this->addRoleToRemove($name, $mainRoleName, $result);
+        $result = $this->addProjectRoleAndUserToRemove($name, $mainRoleName, $result);
 
         return $result;
     }
@@ -345,23 +344,13 @@ class Cleanup
         return $result;
     }
 
-    private function addUserIfExists(Connection $connection, string $name, string $mainRoleName, array $result): array
-    {
-        $userExists = $connection->fetchAll(sprintf(
-            'SHOW USERS LIKE %s',
-            QueryBuilder::quote($name)
-        ));
-        if ($userExists) {
-            $this->logger->debug(sprintf('Found user with same name: %s', $name));
-            $userExists[0]['granted_by'] = $mainRoleName;
-            $result[self::USER][] = $userExists[0];
-        }
-        return $result;
-    }
-
-    private function addRoleToRemove(string $name, string $mainRoleName, array $result): array
+    private function addProjectRoleAndUserToRemove(string $name, string $mainRoleName, array $result): array
     {
         $result[self::ROLE][] = [
+            'name' => $name,
+            'granted_by' => $mainRoleName,
+        ];
+        $result[self::USER][] = [
             'name' => $name,
             'granted_by' => $mainRoleName,
         ];
