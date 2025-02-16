@@ -576,7 +576,7 @@ SQL;
 
         $describeUser = array_filter(
             $describeUser,
-            fn($v) => $v !== ''
+            fn($v) => !empty($v)
         );
 
         array_walk(
