@@ -560,7 +560,6 @@ SQL;
         }
 
         $allowOptions = [
-            'default_secondary_roles',
             'default_role',
             'default_namespace',
             'default_warehouse',
@@ -576,7 +575,7 @@ SQL;
 
         $describeUser = array_filter(
             $describeUser,
-            fn($v) => $v !== ''
+            fn($v) => !empty($v),
         );
 
         array_walk(
