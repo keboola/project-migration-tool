@@ -576,7 +576,8 @@ SQL;
 
         $describeUser = array_filter(
             $describeUser,
-            fn($v) => $v !== ''
+            fn($v, $k) => !empty($v) && $k !== 'DEFAULT_SECONDARY_ROLES',
+            ARRAY_FILTER_USE_BOTH
         );
 
         array_walk(
