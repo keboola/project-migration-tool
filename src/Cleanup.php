@@ -312,6 +312,9 @@ class Cleanup
 
     private function getDataToRemoveForRole(Connection $connection, string $name, string $mainRoleName): array
     {
+        if ($name === $mainRoleName) {
+            throw new UserException('Cannot remove main role');
+        }
         $this->logger->debug(sprintf('Getting data to remove for role: %s', $name));
         $result = [
             self::ROLE => [],
