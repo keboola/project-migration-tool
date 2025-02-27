@@ -201,7 +201,11 @@ class Cleanup
 
             // Drop users owned by roles
             if (!empty($dataToRemove[self::USER])) {
-                $this->logger->info(sprintf('Dropping %d users', count($dataToRemove[self::USER])));
+                $this->logger->info(sprintf('Dropping %d users: ', count($dataToRemove[self::USER])));
+                $this->logger->info(sprintf(implode(
+                    ', ',
+                    array_column($dataToRemove[self::USER], 'name')
+                )));
             }
             foreach ($dataToRemove[self::USER] as $user) {
                 [$sqls, $currentRole] = $this->switchRole($user['granted_by'], $mainRoleName, $sqls, $currentRole);
@@ -213,7 +217,11 @@ class Cleanup
 
             // Drop roles
             if (!empty($dataToRemove[self::ROLE])) {
-                $this->logger->info(sprintf('Dropping %d roles', count($dataToRemove[self::ROLE])));
+                $this->logger->info(sprintf('Dropping %d roles: ', count($dataToRemove[self::ROLE])));
+                $this->logger->info(sprintf(implode(
+                    ', ',
+                    array_column($dataToRemove[self::ROLE], 'name')
+                )));
             }
             foreach ($dataToRemove[self::ROLE] as $role) {
                 [$sqls, $currentRole] = $this->switchRole($role['granted_by'], $mainRoleName, $sqls, $currentRole);
