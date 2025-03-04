@@ -414,7 +414,16 @@ class MigrateStructure
             $projectRoles = $grants[$databaseRoleName];
 
             foreach ($projectRoles->getRoleGrantsFromAllRoles() as $grant) {
-                $this->destinationConnection->assignGrantToRole($grant);
+                try {
+                    $this->destinationConnection->assignGrantToRole($grant);
+                } catch (Throwable $e) {
+                    $this->logger->error(sprintf(
+                        'Error while assigning grant "%s" to role "%s". Error: "%s".',
+                        $grant->getName(),
+                        $grant->getGrantedTo(),
+                        $e->getMessage()
+                    ));
+                }
             }
 
             foreach ($projectRoles->getWarehouseGrantsFromAllRoles() as $grant) {
