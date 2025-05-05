@@ -110,7 +110,7 @@ class MigrateData
                     assert(count($warehouseGrants) > 0);
 
                     try {
-                        $this->destinationConnection->useWarehouse(current($warehouseGrants)->getName());
+                        $this->destinationConnection->useWarehouse($this->getWarehouseName($warehouseGrants));
                     } catch (NoWarehouseException $exception) {
                         if (!preg_match('/^(KEBOOLA|SAPI|sapi)_WORKSPACE_/', $ownershipOnTable->getGrantedBy())) {
                             throw $exception;
@@ -299,5 +299,23 @@ class MigrateData
             $this->destinationConnection->query($sql);
         }
         $this->destinationConnection->useRole($currentRole);
+    }
+
+    private function getWarehouseName(array $warehouseGrants): string
+    {
+        $selectedWarehouse = array_filter(
+            $warehouseGrants,
+            fn(GrantToRole $warehouseGrant) => str_ends_with(
+                $warehouseGrant->getName(),
+                $this->config->getWarehouseSize(),
+            ),
+        );
+
+        // if no warehouse is selected, return the first one
+        if (count($selectedWarehouse) === 0) {
+            return current($warehouseGrants)->getName();
+        }
+
+        return current($selectedWarehouse)->getName();
     }
 }

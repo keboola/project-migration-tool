@@ -63,6 +63,7 @@ class ConfigDefinition extends BaseConfigDefinition
                 ->arrayNode('migrateDatabases')
                     ->scalarPrototype()->end()
                 ->end()
+                ->enumNode('warehouseSize')->values(['SMALL', 'MEDIUM', 'LARGE'])->defaultValue('SMALL')->end()
                 ->booleanNode('skipCheck')->defaultFalse()->end()
                 ->booleanNode('synchronize')->defaultFalse()->end()
                 ->booleanNode('dryPremigrationCleanupRun')->defaultTrue()->end()
