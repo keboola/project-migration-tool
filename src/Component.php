@@ -57,17 +57,8 @@ class Component extends BaseComponent
         $this->getLogger()->info('Exporting grants of roles.');
         $roles = $metadataFetcher->getRolesWithGrants();
 
-        // Create DB replication
-        $this->getLogger()->info('Creating replication.');
-        $prepareMigration->createReplication();
-
-        // Create DB sharing
-        $this->getLogger()->info('Creating DB sharing.');
-        $prepareMigration->createShare();
-
-        // Create and clone databases from shares
-        $this->getLogger()->info('Creating shares databases.');
-        $prepareMigration->createDatabasesFromShares();
+        // Prepare migration databases
+        $this->createDestinationShareDatabases($prepareMigration);
 
         // Create MainRole in target snflk account
         $this->getLogger()->info('Creating main role in target account.');
@@ -94,6 +85,11 @@ class Component extends BaseComponent
     private function runMigrateData(): void
     {
         $migrateFactory = new MigrateFactory($this->getLogger(), $this->getConfig());
+
+        $prepareMigration = $migrateFactory->createPrepareMigration();
+
+        // Prepare migration databases
+        $this->createDestinationShareDatabases($prepareMigration);
 
         $metadataFetcher = $migrateFactory->createMetadataFetcher();
         $migrateData = $migrateFactory->createMigrateData();
@@ -153,5 +149,20 @@ class Component extends BaseComponent
     protected function getConfigDefinitionClass(): string
     {
         return ConfigDefinition::class;
+    }
+
+    private function createDestinationShareDatabases(PrepareMigration $prepareMigration): void
+    {
+        // Create DB replication
+        $this->getLogger()->info('Creating replication.');
+        $prepareMigration->createReplication();
+
+        // Create DB sharing
+        $this->getLogger()->info('Creating DB sharing.');
+        $prepareMigration->createShare();
+
+        // Create and clone databases from shares
+        $this->getLogger()->info('Creating shares databases.');
+        $prepareMigration->createDatabasesFromShares();
     }
 }
