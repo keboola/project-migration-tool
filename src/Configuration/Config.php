@@ -91,17 +91,38 @@ class Config extends BaseConfig
 
     public function getSourceSnowflakePassword(): string
     {
-        return $this->getStringValue(['parameters', 'credentials', 'source', '#password']);
+        return $this->getStringValue(['parameters', 'credentials', 'source', '#password'], '');
     }
 
     public function getMigrationSnowflakePassword(): string
     {
-        return $this->getStringValue(['parameters', 'credentials', 'migration', '#password']);
+        return $this->getStringValue(['parameters', 'credentials', 'migration', '#password'], '');
     }
 
     public function getTargetSnowflakePassword(): string
     {
-        return $this->getStringValue(['parameters', 'credentials', 'target', '#password']);
+        return $this->getStringValue(['parameters', 'credentials', 'target', '#password'], '');
+    }
+
+    public function getSourceSnowflakePrivateKey(): ?string
+    {
+        /** @var string|false $value */
+        $value = $this->getValue(['parameters', 'credentials', 'source', '#privateKey'], false);
+        return $value ?: null;
+    }
+
+    public function getMigrationSnowflakePrivateKey(): ?string
+    {
+        /** @var string|false $value */
+        $value = $this->getValue(['parameters', 'credentials', 'migration', '#privateKey'], false);
+        return $value ?: null;
+    }
+
+    public function getTargetSnowflakePrivateKey(): ?string
+    {
+        /** @var string|false $value */
+        $value = $this->getValue(['parameters', 'credentials', 'target', '#privateKey'], false);
+        return $value ?: null;
     }
 
     public function getSourceSnowflakeWarehouse(): string
