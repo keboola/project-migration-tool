@@ -6,6 +6,7 @@ namespace ProjectMigrationTool\Configuration;
 
 use Keboola\Component\Config\BaseConfigDefinition;
 use Symfony\Component\Config\Definition\Builder\ArrayNodeDefinition;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 
 class ConfigDefinition extends BaseConfigDefinition
 {
@@ -32,28 +33,55 @@ class ConfigDefinition extends BaseConfigDefinition
                     ->ignoreExtraKeys()
                     ->children()
                         ->arrayNode('source')
+                            ->validate()->always(function ($v) {
+                                if (!empty($v['#privateKey']) && !empty($v['#password'])) {
+                                    throw new InvalidConfigurationException(
+                                        'You can use either privateKey or password, not both.',
+                                    );
+                                }
+                                return $v;
+                            })->end()
                             ->children()
                                 ->scalarNode('host')->isRequired()->end()
                                 ->scalarNode('username')->isRequired()->end()
-                                ->scalarNode('#password')->isRequired()->end()
+                                ->scalarNode('#password')->end()
+                                ->scalarNode('#privateKey')->end()
                                 ->scalarNode('warehouse')->isRequired()->end()
                                 ->scalarNode('role')->isRequired()->end()
                             ->end()
                         ->end()
                         ->arrayNode('migration')
+                            ->validate()->always(function ($v) {
+                                if (!empty($v['#privateKey']) && !empty($v['#password'])) {
+                                    throw new InvalidConfigurationException(
+                                        'You can use either privateKey or password, not both.',
+                                    );
+                                }
+                                return $v;
+                            })->end()
                             ->children()
                                 ->scalarNode('host')->isRequired()->end()
                                 ->scalarNode('username')->isRequired()->end()
-                                ->scalarNode('#password')->isRequired()->end()
+                                ->scalarNode('#password')->end()
+                                ->scalarNode('#privateKey')->end()
                                 ->scalarNode('warehouse')->isRequired()->end()
                                 ->scalarNode('role')->isRequired()->end()
                             ->end()
                         ->end()
                         ->arrayNode('target')
+                            ->validate()->always(function ($v) {
+                                if (!empty($v['#privateKey']) && !empty($v['#password'])) {
+                                    throw new InvalidConfigurationException(
+                                        'You can use either privateKey or password, not both.',
+                                    );
+                                }
+                                return $v;
+                            })->end()
                             ->children()
                                 ->scalarNode('host')->isRequired()->end()
                                 ->scalarNode('username')->isRequired()->end()
-                                ->scalarNode('#password')->isRequired()->end()
+                                ->scalarNode('#password')->end()
+                                ->scalarNode('#privateKey')->end()
                                 ->scalarNode('warehouse')->isRequired()->end()
                                 ->scalarNode('role')->isRequired()->end()
                             ->end()

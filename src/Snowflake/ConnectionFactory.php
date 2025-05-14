@@ -14,6 +14,7 @@ class ConnectionFactory
         string $host,
         string $user,
         string $password,
+        ?string $privateKey,
         string $warehouse,
         string $role,
         string $connectionName,
@@ -26,6 +27,9 @@ class ConnectionFactory
             'warehouse' => $warehouse,
             'clientSessionKeepAlive' => true,
         ];
+        if ($privateKey) {
+            $options['privateKey'] = $privateKey;
+        }
         try {
             return new Connection($options, $role, $logger);
         } catch (SnowflakeDbAdapterException $e) {
