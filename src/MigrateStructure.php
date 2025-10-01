@@ -574,6 +574,7 @@ SQL;
             'default_warehouse',
             'display_name',
             'login_name',
+            'type',
         ];
 
         $describeUser = (array) array_filter(
@@ -587,14 +588,13 @@ SQL;
             fn($v) => !empty($v),
         );
 
+        if ($describeUser['type'] !== 'SERVICE') {
+            $describeUser['password'] = Helper::generateRandomString();
+        }
+
         array_walk(
             $describeUser,
             fn(&$item, $k) => $item = sprintf('%s = %s', strtoupper($k), QueryBuilder::quote($item))
-        );
-
-        $describeUser['password'] = sprintf(
-            'PASSWORD = %s',
-            QueryBuilder::quote(Helper::generateRandomString())
         );
 
         $this->destinationConnection->query(sprintf(
