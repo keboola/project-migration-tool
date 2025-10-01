@@ -1,4 +1,4 @@
-FROM php:8.1-cli-bookworm
+FROM php:8.1-cli-trixie
 
 ARG COMPOSER_FLAGS="--prefer-dist --no-interaction"
 ARG DEBIAN_FRONTEND=noninteractive
@@ -85,7 +85,6 @@ SQLLevel=1
 EOF
 
 # Install data-diff
-RUN python3 -m pip install --upgrade pip --break-system-packages
 RUN pip3 install data-diff --break-system-packages
 RUN pip3 install 'data-diff[snowflake]' --break-system-packages
 
