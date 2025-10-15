@@ -588,6 +588,10 @@ SQL;
             fn($v) => !empty($v),
         );
 
+        if (!isset($describeUser['type'])) {
+            $describeUser['type'] = 'PERSON';
+        }
+
         if ($describeUser['type'] !== 'SERVICE') {
             $describeUser['password'] = Helper::generateRandomString();
         }
