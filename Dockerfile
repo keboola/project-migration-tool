@@ -85,8 +85,8 @@ SQLLevel=1
 EOF
 
 # Install data-diff
-RUN pip3 install data-diff --break-system-packages
-RUN pip3 install 'data-diff[snowflake]' --break-system-packages
+RUN pip3 install data-diff --break-system-packages --no-deps
+RUN pip3 install 'data-diff[snowflake]' --break-system-packages --no-deps
 
 ## Composer - deps always cached unless changed
 # First copy only composer files
