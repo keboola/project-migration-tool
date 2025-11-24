@@ -51,10 +51,10 @@ class MetadataFetcher
 
         $grants = array_map(
             fn(array $v) => GrantToRole::fromArray($v),
-            $this->sourceConnection->fetchAll(sprintf(
+            Helper::filterUserDollarGrants($this->sourceConnection->fetchAll(sprintf(
                 'SHOW GRANTS TO ROLE %s;',
                 Helper::quoteIdentifier($mainRole->getName())
-            ))
+            )))
         );
 
         $mainRole->setGrants(Helper::parseGrantsToObjects($grants, $this->config));
@@ -84,10 +84,10 @@ class MetadataFetcher
             foreach ($roles as $role) {
                 $grants = array_map(
                     fn(array $v) => GrantToRole::fromArray($v),
-                    $this->sourceConnection->fetchAll(sprintf(
+                    Helper::filterUserDollarGrants($this->sourceConnection->fetchAll(sprintf(
                         'SHOW GRANTS TO ROLE %s;',
                         Helper::quoteIdentifier($role->getName())
-                    ))
+                    )))
                 );
 
                 $futureGrants = array_map(
@@ -119,10 +119,10 @@ class MetadataFetcher
             /** @var GrantToRole[] $grantsToRole */
             $grantsToRole = array_map(
                 fn(array $v) => GrantToRole::fromArray($v),
-                $this->sourceConnection->fetchAll(sprintf(
+                Helper::filterUserDollarGrants($this->sourceConnection->fetchAll(sprintf(
                     'SHOW GRANTS TO ROLE %s;',
                     Helper::quoteIdentifier($role->getName())
-                ))
+                )))
             );
 
             $ownershipToRole = array_filter($grantsToRole, fn(GrantToRole $v) => $v->getPrivilege() === 'OWNERSHIP');

@@ -377,10 +377,10 @@ class MigrationChecker
     {
         $grants = array_map(
             fn(array $grant) => GrantToRole::fromArray($grant),
-            $this->destinationConnection->fetchAll(sprintf(
+            Helper::filterUserDollarGrants($this->destinationConnection->fetchAll(sprintf(
                 'SHOW GRANTS TO ROLE %s',
                 Helper::quoteIdentifier($role)
-            ))
+            )))
         );
 
         $filteredGrants = array_filter(
