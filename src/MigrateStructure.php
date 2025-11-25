@@ -271,10 +271,10 @@ class MigrateStructure
             QueryBuilder::quote($mainRole),
         ))) > 0;
         if ($mainRoleExists) {
-            $grantsToTargetUser = Helper::filterUserDollarGrants($this->destinationConnection->fetchAll(sprintf(
+            $grantsToTargetUser = $this->destinationConnection->fetchAll(sprintf(
                 'SHOW GRANTS TO USER %s',
                 QueryBuilder::quoteIdentifier($this->config->getTargetSnowflakeUser()),
-            )));
+            ));
             $mainRoleExistsOnTargetUser = array_reduce(
                 $grantsToTargetUser,
                 fn ($found, $v) => $found || $v['role'] === $mainRole,

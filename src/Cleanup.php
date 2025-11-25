@@ -104,10 +104,10 @@ class Cleanup
 
         // Check if main role is assigned to target user
         $this->logger->info('Checking main role assignment and ownership');
-        $grantsToTargetUser = Helper::filterUserDollarGrants($this->destinationConnection->fetchAll(sprintf(
+        $grantsToTargetUser = $this->destinationConnection->fetchAll(sprintf(
             'SHOW GRANTS TO USER %s',
             QueryBuilder::quoteIdentifier($this->config->getTargetSnowflakeUser()),
-        )));
+        ));
         $mainRoleExistsOnTargetUser = array_reduce(
             $grantsToTargetUser,
             fn ($found, $v) => $found || $v['role'] === $mainRoleName,
@@ -288,10 +288,10 @@ class Cleanup
         /** @var GrantToUser[] $userRoles */
         $userRoles = array_map(
             fn(array $v) => GrantToUser::fromArray($v),
-            Helper::filterUserDollarGrants($this->destinationConnection->fetchAll(sprintf(
+            $this->destinationConnection->fetchAll(sprintf(
                 'SHOW GRANTS TO USER %s',
                 Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
-            )))
+            ))
         );
 
         foreach (array_reverse($userRoles) as $userRole) {
@@ -329,10 +329,10 @@ class Cleanup
             self::USER => [],
         ];
 
-        $grants = Helper::filterUserDollarGrants($connection->fetchAll(sprintf(
+        $grants = $connection->fetchAll(sprintf(
             'SHOW GRANTS TO ROLE %s',
             Helper::quoteIdentifier($name)
-        )));
+        ));
 
         $ownershipGrants = array_filter(
             $grants,
