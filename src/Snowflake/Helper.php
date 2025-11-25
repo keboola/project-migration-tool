@@ -14,6 +14,28 @@ use ProjectMigrationTool\ValueObject\RoleGrants;
 class Helper
 {
     /**
+     * Filters out Snowflake internal USER$ system grants from an array of raw grant data.
+     * These grants (e.g., USER$KEBOOLA_WORKSPACE_942394159) are internal Snowflake system grants
+     * for user-based access control that started appearing around November 2025.
+     * They should not be managed by end users and cause structure migration validation to fail.
+     *
+     * This filter is intended for use with SHOW GRANTS results from sourceConnection only,
+     * filtering based on the 'name' field.
+     *
+     * @param array<array<string, mixed>> $grants Raw grant data from SHOW GRANTS queries
+     * @return array<array<string, mixed>> Filtered grants without USER$ entries
+     */
+    public static function filterUserDollarGrants(array $grants): array
+    {
+        return array_filter($grants, function (array $grant): bool {
+            if (isset($grant['name']) && is_string($grant['name']) && str_starts_with($grant['name'], 'USER$')) {
+                return false;
+            }
+            return true;
+        });
+    }
+
+    /**
      * @param GrantToRole[] $grants
      */
     public static function parseGrantsToObjects(array $grants, Config $config): RoleGrants

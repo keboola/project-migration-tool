@@ -349,10 +349,10 @@ class MigrateStructure
 
         $sourceGrants = array_map(
             fn(array $v) => GrantToRole::fromArray($v),
-            $this->sourceConnection->fetchAll(sprintf(
+            Helper::filterUserDollarGrants($this->sourceConnection->fetchAll(sprintf(
                 'SHOW GRANTS TO ROLE %s',
                 Helper::quoteIdentifier($this->sourceConnection->getCurrentRole()),
-            ))
+            )))
         );
 
         $sourceGrants = array_filter(
@@ -448,10 +448,10 @@ class MigrateStructure
             /** @var GrantToUser[] $grants */
             $grants = array_map(
                 fn(array $v) => GrantToUser::fromArray($v),
-                $this->sourceConnection->fetchAll(sprintf(
+                Helper::filterUserDollarGrants($this->sourceConnection->fetchAll(sprintf(
                     'SHOW GRANTS TO USER %s',
                     Helper::quoteIdentifier($user)
-                ))
+                )))
             );
 
             foreach ($grants as $grant) {
