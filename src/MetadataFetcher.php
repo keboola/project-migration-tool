@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ProjectMigrationTool;
 
+use Keboola\SnowflakeDbAdapter\Exception\RuntimeException;
 use Keboola\SnowflakeDbAdapter\QueryBuilder;
 use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Snowflake\Helper;
@@ -11,12 +12,14 @@ use ProjectMigrationTool\ValueObject\FutureGrantToRole;
 use ProjectMigrationTool\ValueObject\GrantToRole;
 use ProjectMigrationTool\ValueObject\ProjectRoles;
 use ProjectMigrationTool\ValueObject\Role;
+use Psr\Log\LoggerInterface;
 
 class MetadataFetcher
 {
     public function __construct(
         readonly Snowflake\Connection $sourceConnection,
         readonly Config $config,
+        readonly LoggerInterface $logger,
     ) {
     }
 
@@ -82,21 +85,33 @@ class MetadataFetcher
 
             $projectRoles = new ProjectRoles();
             foreach ($roles as $role) {
-                $grants = array_map(
-                    fn(array $v) => GrantToRole::fromArray($v),
-                    Helper::filterUserDollarGrants($this->sourceConnection->fetchAll(sprintf(
-                        'SHOW GRANTS TO ROLE %s;',
-                        Helper::quoteIdentifier($role->getName())
-                    )))
-                );
+                try {
+                    $grants = array_map(
+                        fn(array $v) => GrantToRole::fromArray($v),
+                        Helper::filterUserDollarGrants($this->sourceConnection->fetchAll(sprintf(
+                            'SHOW GRANTS TO ROLE %s;',
+                            Helper::quoteIdentifier($role->getName())
+                        )))
+                    );
 
-                $futureGrants = array_map(
-                    fn(array $v) => FutureGrantToRole::fromArray($v),
-                    $this->sourceConnection->fetchAll(sprintf(
-                        'SHOW FUTURE GRANTS TO ROLE %s;',
-                        Helper::quoteIdentifier($role->getName())
-                    ))
-                );
+                    $futureGrants = array_map(
+                        fn(array $v) => FutureGrantToRole::fromArray($v),
+                        $this->sourceConnection->fetchAll(sprintf(
+                            'SHOW FUTURE GRANTS TO ROLE %s;',
+                            Helper::quoteIdentifier($role->getName())
+                        ))
+                    );
+                } catch (RuntimeException $e) {
+                    if (str_contains($e->getMessage(), 'does not exist or not authorized')) {
+                        $this->logger->warning(sprintf(
+                            'Skipping role "%s": %s',
+                            $role->getName(),
+                            $e->getMessage(),
+                        ));
+                        continue;
+                    }
+                    throw $e;
+                }
 
                 $role->setGrants(Helper::parseGrantsToObjects($grants, $this->config));
                 $role->setFutureGrants(Helper::parseFutureGrantsToObjects($futureGrants));

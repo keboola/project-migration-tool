@@ -84,6 +84,7 @@ class MigrateFactory
         return new MetadataFetcher(
             $this->sourceConnection,
             $this->config,
+            $this->logger,
         );
     }
 
