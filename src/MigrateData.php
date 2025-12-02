@@ -60,6 +60,16 @@ class MigrateData
                     continue;
                 }
                 $schemaName = $schema['name'];
+
+                // Skip dev branch schemas - they follow pattern: {branchId}_{bucketId}
+                if ($this->config->skipDevBranches() && Helper::isDevBranchSchema($schemaName)) {
+                    $this->logger->info(sprintf(
+                        'Skipping dev branch schema "%s" - dev branch objects should not be migrated.',
+                        $schemaName
+                    ));
+                    continue;
+                }
+
                 $this->logger->info(sprintf('Use schema "%s".', $schemaName));
 
                 $tablesInShare = $this->destinationConnection->fetchAll(sprintf(
@@ -112,7 +122,9 @@ class MigrateData
                     try {
                         $this->destinationConnection->useWarehouse($this->getWarehouseName($warehouseGrants));
                     } catch (NoWarehouseException $exception) {
-                        if (!preg_match('/^(KEBOOLA|SAPI|sapi)_WORKSPACE_/', $ownershipOnTable->getGrantedBy())) {
+                        if (!$this->config->skipDevBranches()
+                            || !Helper::isWorkspaceRole($ownershipOnTable->getGrantedBy())
+                        ) {
                             throw $exception;
                         }
                         $this->logger->info(sprintf(

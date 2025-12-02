@@ -108,6 +108,15 @@ class MigrateStructure
                 }
                 $schemaName = $schema['name'];
 
+                // Skip dev branch schemas - they follow pattern: {branchId}_{bucketId}
+                if ($this->config->skipDevBranches() && Helper::isDevBranchSchema($schemaName)) {
+                    $this->logger->info(sprintf(
+                        'Skipping dev branch schema "%s" - dev branch objects should not be migrated.',
+                        $schemaName
+                    ));
+                    continue;
+                }
+
                 $this->logger->info(sprintf('Migrate schema "%s".', $schemaName));
 
                 /** @var GrantToRole[] $schemaGrants */

@@ -47,6 +47,13 @@ class Config extends BaseConfig
         return $value;
     }
 
+    public function skipDevBranches(): bool
+    {
+        /** @var bool $value */
+        $value = $this->getValue(['parameters', 'skipDevBranches'], false);
+        return $value;
+    }
+
     public function getSynchronizeDryPremigrationCleanupRun(): bool
     {
         /** @var bool $value */
