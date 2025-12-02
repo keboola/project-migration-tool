@@ -122,8 +122,7 @@ class MigrateData
                     try {
                         $this->destinationConnection->useWarehouse($this->getWarehouseName($warehouseGrants));
                     } catch (NoWarehouseException $exception) {
-                        if (
-                            !$this->config->skipDevBranches()
+                        if (!$this->config->skipDevBranches()
                             || !Helper::isWorkspaceRole($ownershipOnTable->getGrantedBy())
                         ) {
                             throw $exception;
