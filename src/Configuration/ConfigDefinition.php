@@ -95,6 +95,7 @@ class ConfigDefinition extends BaseConfigDefinition
                 ->booleanNode('skipCheck')->defaultFalse()->end()
                 ->booleanNode('synchronize')->defaultFalse()->end()
                 ->booleanNode('dryPremigrationCleanupRun')->defaultTrue()->end()
+                ->booleanNode('skipDevBranches')->defaultFalse()->end()
             ->end()
         ;
         // @formatter:on

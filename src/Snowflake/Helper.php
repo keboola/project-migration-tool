@@ -181,7 +181,7 @@ class Helper
      * Checks if a role name belongs to a workspace (including dev branch workspaces).
      * Workspace roles follow these patterns:
      * - Default branch: KEBOOLA_WORKSPACE_{workspaceId} or SAPI_WORKSPACE_{workspaceId}
-     * - Dev branch: KEBOOLA_{branchId}_WORKSPACE_{workspaceId}
+     * - Dev branch: KEBOOLA_{branchId}_WORKSPACE_{workspaceId} or SAPI_{branchId}_WORKSPACE_{workspaceId}
      *
      * @param string $roleName The role name to check
      * @return bool True if the role belongs to a workspace
@@ -192,7 +192,7 @@ class Helper
         // - KEBOOLA_WORKSPACE_123456 (default branch)
         // - KEBOOLA_14107_WORKSPACE_123456 (dev branch with branchId 14107)
         // - SAPI_WORKSPACE_123456 (legacy default branch)
-        // - sapi_WORKSPACE_123456 (legacy lowercase)
+        // - SAPI_14107_WORKSPACE_123456 (legacy dev branch)
         return (bool) preg_match('/^(KEBOOLA|SAPI|sapi)_(\d+_)?WORKSPACE_/', $roleName);
     }
 }

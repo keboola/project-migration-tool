@@ -62,7 +62,7 @@ class MigrateData
                 $schemaName = $schema['name'];
 
                 // Skip dev branch schemas - they follow pattern: {branchId}_{bucketId}
-                if (Helper::isDevBranchSchema($schemaName)) {
+                if ($this->config->skipDevBranches() && Helper::isDevBranchSchema($schemaName)) {
                     $this->logger->info(sprintf(
                         'Skipping dev branch schema "%s" - dev branch objects should not be migrated.',
                         $schemaName
@@ -122,7 +122,10 @@ class MigrateData
                     try {
                         $this->destinationConnection->useWarehouse($this->getWarehouseName($warehouseGrants));
                     } catch (NoWarehouseException $exception) {
-                        if (!Helper::isWorkspaceRole($ownershipOnTable->getGrantedBy())) {
+                        if (
+                            !$this->config->skipDevBranches()
+                            || !Helper::isWorkspaceRole($ownershipOnTable->getGrantedBy())
+                        ) {
                             throw $exception;
                         }
                         $this->logger->info(sprintf(
