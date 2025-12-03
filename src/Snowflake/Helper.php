@@ -36,6 +36,19 @@ class Helper
     }
 
     /**
+     * Checks if a role name is a workspace role that should be skipped during migration.
+     * Workspace roles are ephemeral and dynamically created by Keboola when workspaces are provisioned.
+     * They may be deleted between migration phases, causing "Role does not exist" errors.
+     *
+     * @param string $roleName The role name to check
+     * @return bool True if the role is a workspace role that should be skipped
+     */
+    public static function isWorkspaceRole(string $roleName): bool
+    {
+        return (bool) preg_match('/^(KEBOOLA|SAPI|sapi)_WORKSPACE_/', $roleName);
+    }
+
+    /**
      * @param GrantToRole[] $grants
      */
     public static function parseGrantsToObjects(array $grants, Config $config): RoleGrants

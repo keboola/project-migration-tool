@@ -130,6 +130,9 @@ class MetadataFetcher
             $filteredRolesInRole = array_filter($rolesInRole, fn(GrantToRole $v) => !in_array($v->getName(), $roles));
 
             foreach ($filteredRolesInRole as $item) {
+                if (Helper::isWorkspaceRole($item->getName())) {
+                    continue;
+                }
                 $roles[$item->getName()] = Role::fromArray([
                     'name' => $item->getName(),
                     'owner' => $item->getGranteeName(),
