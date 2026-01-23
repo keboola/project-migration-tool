@@ -176,7 +176,7 @@ class Config extends BaseConfig
         $jsonString = $this->getStringValue(['parameters', '#projectsToken']);
         $decoded = json_decode($jsonString, true);
 
-        if ($decoded === null && json_last_error() !== JSON_ERROR_NONE) {
+        if (json_last_error() !== JSON_ERROR_NONE) {
             throw new UserException(
                 sprintf('Invalid JSON in projectsToken: %s', json_last_error_msg())
             );

@@ -7,7 +7,6 @@ namespace ProjectMigrationTool;
 use Keboola\Component\UserException;
 use Keboola\SnowflakeDbAdapter\QueryBuilder;
 use Keboola\StorageApi\Components;
-use Keboola\StorageApi\Options\BackendConfiguration;
 use Keboola\StorageApi\Options\Components\Configuration;
 use Keboola\StorageApi\Options\Components\ListComponentConfigurationsOptions;
 use Keboola\StorageApi\WorkspaceLoginType;
@@ -35,7 +34,7 @@ class MigrateDataGatewayApp
         $this->storageClientFactory = new StorageClientRequestFactory($clientOptions);
     }
 
-    private function generateSshKeyPair(): array
+    private function generatePublicKey(): string
     {
         $config = [
             'private_key_bits' => 2048,
@@ -44,12 +43,7 @@ class MigrateDataGatewayApp
 
         $resource = openssl_pkey_new($config);
         if ($resource === false) {
-            throw new UserException('Failed to generate SSH key pair');
-        }
-
-        $exportResult = openssl_pkey_export($resource, $privateKey);
-        if ($exportResult === false) {
-            throw new UserException('Failed to export private key');
+            throw new UserException('Failed to generate RSA key pair');
         }
 
         $keyDetails = openssl_pkey_get_details($resource);
@@ -57,10 +51,7 @@ class MigrateDataGatewayApp
             throw new UserException('Failed to get key details');
         }
 
-        return [
-            'publicKey' => $keyDetails['key'],
-            'privateKey' => $privateKey,
-        ];
+        return $keyDetails['key'];
     }
 
     public function migrate(array $projectsToken): void
@@ -86,16 +77,26 @@ class MigrateDataGatewayApp
             }
 
             foreach ($configurations as $configuration) {
+                $database = $configuration['configuration']['parameters']['db']['database'] ?? null;
+                $schema = $configuration['configuration']['parameters']['db']['schema'] ?? null;
+
+                if ($database === null || $schema === null) {
+                    $this->logger->warning(sprintf(
+                        'Skipping configuration "%s" - missing database or schema',
+                        $configuration['name'] ?? $configuration['id'],
+                    ));
+                    continue;
+                }
+
                 $this->logger->info(sprintf(
                     'Migrate configuration "%s"',
                     $configuration['name'],
                 ));
-                $database = $configuration['configuration']['parameters']['db']['database'];
                 $databaseName = preg_replace('/_\d+$/', '', $database);
                 $newWorkspace = $this->createNewWorkspace($components, $configuration);
                 $this->copyWorkspaceData(
                     $databaseName,
-                    $configuration['configuration']['parameters']['db']['schema'],
+                    $schema,
                     $newWorkspace['connection']['schema'],
                 );
                 $this->updateConfiguration($components, $configuration, $newWorkspace);
@@ -123,12 +124,11 @@ class MigrateDataGatewayApp
 
     private function createNewWorkspace(Components $components, array $configuration): array
     {
-        $keyPair = $this->generateSshKeyPair();
         return $components->createConfigurationWorkspace(
             self::COMPONENT_ID,
             $configuration['id'],
             [
-                'publicKey' => $keyPair['publicKey'],
+                'publicKey' => $this->generatePublicKey(),
                 'useCase' => 'reader',
                 'backend' => 'snowflake',
                 'loginType' => WorkspaceLoginType::SNOWFLAKE_PERSON_KEYPAIR,
