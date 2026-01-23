@@ -23,6 +23,7 @@ class ConfigDefinition extends BaseConfigDefinition
                     ->values([
                         Config::ACTION_MIGRATE_STRUCTURE,
                         Config::ACTION_MIGRATE_DATA,
+                        Config::ACTION_MIGRATE_DATA_GATEWAY,
                         Config::ACTION_CHECK,
                         Config::ACTION_CLEANUP,
                         Config::ACTION_CLEANUP_SOURCE_ACCOUNT,
@@ -91,6 +92,8 @@ class ConfigDefinition extends BaseConfigDefinition
                 ->arrayNode('migrateDatabases')
                     ->scalarPrototype()->end()
                 ->end()
+                ->scalarNode('stackUrl')->end()
+                ->scalarNode('#projectsToken')->end()
                 ->enumNode('warehouseSize')->values(['SMALL', 'MEDIUM', 'LARGE'])->defaultValue('SMALL')->end()
                 ->booleanNode('skipCheck')->defaultFalse()->end()
                 ->booleanNode('synchronize')->defaultFalse()->end()

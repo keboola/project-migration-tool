@@ -29,6 +29,9 @@ class Component extends BaseComponent
             case Config::ACTION_CLEANUP_SOURCE_ACCOUNT:
                 $this->runCleanupSourceAccount();
                 break;
+            case Config::ACTION_MIGRATE_DATA_GATEWAY:
+                $this->runMigrateDataGatewayApp();
+                break;
             default:
                 throw new Exception(sprintf('Action "%s" is not supported.', $this->getConfig()->getAction()));
         }
@@ -102,6 +105,16 @@ class Component extends BaseComponent
         $roles = $metadataFetcher->getRolesWithGrants();
 
         $migrateData->migrate($mainRole, $roles);
+    }
+
+    private function runMigrateDataGatewayApp(): void
+    {
+        $migrateFactory = new MigrateFactory($this->getLogger(), $this->getConfig());
+        $migrateDataGatewayApp = $migrateFactory->createMigrateDataGatewayApp();
+
+        $migrateDataGatewayApp->migrate(
+            $this->getConfig()->getProjectsToken(),
+        );
     }
 
     private function runCleanup(): void

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ProjectMigrationTool\Configuration;
 
 use Keboola\Component\Config\BaseConfig;
+use Keboola\Component\UserException;
 
 class Config extends BaseConfig
 {
@@ -13,6 +14,8 @@ class Config extends BaseConfig
     public const ACTION_MIGRATE_DATA = 'runMigrateData';
 
     public const ACTION_MIGRATE_STRUCTURE = 'runMigrateStructure';
+
+    public const ACTION_MIGRATE_DATA_GATEWAY = 'runMigrateDataGatewayApp';
 
     public const ACTION_CLEANUP = 'runCleanup';
 
@@ -57,6 +60,11 @@ class Config extends BaseConfig
     public function hasMigrateAccount(): bool
     {
         return is_array($this->getValue(['parameters', 'credentials', 'migration'], false));
+    }
+
+    public function hasSourceAccount(): bool
+    {
+        return is_array($this->getValue(['parameters', 'credentials', 'source'], false));
     }
 
     public function getSourceSnowflakeHost(): string
@@ -153,5 +161,31 @@ class Config extends BaseConfig
     public function getMigrationSnowflakeRole(): string
     {
         return $this->getStringValue(['parameters', 'credentials', 'migration', 'role']);
+    }
+
+    public function getProjectsUrlStack(): string
+    {
+        return $this->getStringValue(['parameters', 'stackUrl']);
+    }
+
+    /**
+     * @return string[] Array of project tokens
+     */
+    public function getProjectsToken(): array
+    {
+        $jsonString = $this->getStringValue(['parameters', '#projectsToken']);
+        $decoded = json_decode($jsonString, true);
+
+        if ($decoded === null && json_last_error() !== JSON_ERROR_NONE) {
+            throw new UserException(
+                sprintf('Invalid JSON in projectsToken: %s', json_last_error_msg())
+            );
+        }
+
+        if (!is_array($decoded)) {
+            throw new UserException('projectsToken must be a JSON array');
+        }
+
+        return $decoded;
     }
 }
