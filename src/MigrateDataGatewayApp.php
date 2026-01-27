@@ -76,6 +76,7 @@ class MigrateDataGatewayApp
                 continue;
             }
 
+            $workspaces = [];
             foreach ($configurations as $configuration) {
                 $database = $configuration['configuration']['parameters']['db']['database'] ?? null;
                 $schema = $configuration['configuration']['parameters']['db']['schema'] ?? null;
@@ -92,13 +93,30 @@ class MigrateDataGatewayApp
                     'Migrate configuration "%s"',
                     $configuration['name'],
                 ));
-                $databaseName = preg_replace('/_\d+$/', '', $database);
-                $newWorkspace = $this->createNewWorkspace($components, $configuration);
-                $this->copyWorkspaceData(
-                    $databaseName,
-                    $schema,
-                    $newWorkspace['connection']['schema'],
-                );
+
+                if (\array_key_exists($schema, $workspaces)) {
+                    $this->logger->info(sprintf(
+                        'Configuration "%s" uses workspace from another configuration. Updating just config',
+                        $configuration['name'],
+                    ));
+                    $newWorkspace = $workspaces[$schema];
+                } else {
+                    $this->logger->info(sprintf(
+                        'Creating workspace for Configuration "%s"',
+                        $configuration['name'],
+                    ));
+
+                    $databaseName = preg_replace('/_\d+$/', '', $database);
+                    $newWorkspace = $this->createNewWorkspace($components, $configuration);
+                    $this->copyWorkspaceData(
+                        $databaseName,
+                        $schema,
+                        $newWorkspace['connection']['schema'],
+                    );
+
+                    $workspaces[$schema] = $newWorkspace;
+                }
+
                 $this->updateConfiguration($components, $configuration, $newWorkspace);
             }
         }
