@@ -288,10 +288,13 @@ class Cleanup
         /** @var GrantToUser[] $userRoles */
         $userRoles = array_map(
             fn(array $v) => GrantToUser::fromArray($v),
-            $this->destinationConnection->fetchAll(sprintf(
-                'SHOW GRANTS TO USER %s',
-                Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
-            ))
+            array_filter(
+                $this->destinationConnection->fetchAll(sprintf(
+                    'SHOW GRANTS TO USER %s',
+                    Helper::quoteIdentifier($this->config->getTargetSnowflakeUser())
+                )),
+                fn(array $v) => $v['role'] !== null
+            )
         );
 
         foreach (array_reverse($userRoles) as $userRole) {
