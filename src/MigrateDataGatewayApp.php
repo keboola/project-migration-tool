@@ -94,7 +94,7 @@ class MigrateDataGatewayApp
                     $configuration['name'],
                 ));
 
-                if (\array_key_exists($schema, $workspaces)) {
+                if (array_key_exists($schema, $workspaces)) {
                     $this->logger->info(sprintf(
                         'Configuration "%s" uses workspace from another configuration. Updating just config',
                         $configuration['name'],
