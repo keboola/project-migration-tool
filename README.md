@@ -33,6 +33,34 @@ CREATE USER "MIGRATE" PASSWORD='MIGRATE_PASSWORD' DEFAULT_ROLE='SOURCE_MAIN_MIGR
 GRANT ROLE "ACCOUNTADMIN" TO USER "MIGRATE";
 ```
 
+### Cross-region replication
+
+For cross-region migrations the tool creates a single Snowflake replication group on the
+source account, replicates it to the migrate account, and refreshes it. The refresh is
+awaited by polling `REPLICATION_GROUP_REFRESH_PROGRESS`; progress is logged on each poll.
+
+The group name is derived deterministically from the set of migrated databases
+(`MIGRATION_RG_<hash>`). The same migration reuses the same group across repeated runs
+(idempotent), while migrations with different database sets get distinct names so parallel
+migrations never collide on a shared group.
+
+The replication group is dropped during the cleanup phase (`runCleanup`). Because dropping a
+secondary replication group leaves its member databases behind as writable standalone
+databases, the cleanup also drops those replica databases on the migrate account so their
+names are freed and they stop consuming storage. Same-region migrations do not use a
+replication group, so creation and teardown are no-ops.
+
+**Deployment prerequisite:** the configured source and migrate roles must hold the
+privilege to create and drop replication groups (`CREATE REPLICATION GROUP` on the source
+account, `CREATE REPLICATION GROUP ... AS REPLICA` on the migrate account, and `OWNERSHIP`
+to drop them). The tool runs these statements under the configured roles, not `ACCOUNTADMIN`.
+
+Tunable parameters (optional):
+
+- `replicationRefreshTimeout` (seconds, default `3600`) — fail the run if the refresh
+  does not complete within this time.
+- `replicationRefreshPollInterval` (seconds, default `30`) — wait between progress polls.
+
 ## On Migrate Snowflake account (only if you migrate to a different region)
     
 ```sql

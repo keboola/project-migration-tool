@@ -125,6 +125,10 @@ class Component extends BaseComponent
 
         $this->getLogger()->info('Post-migration cleanup.');
         $cleanup->postMigration();
+
+        // Tear down the cross-region replication group (no-op for same-region migrations).
+        $this->getLogger()->info('Tearing down replication group.');
+        $cleanup->teardownReplication();
     }
 
     private function runCheckMigratedData(): void

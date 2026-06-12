@@ -95,6 +95,8 @@ class ConfigDefinition extends BaseConfigDefinition
                 ->scalarNode('stackUrl')->end()
                 ->scalarNode('#projectsToken')->end()
                 ->enumNode('warehouseSize')->values(['SMALL', 'MEDIUM', 'LARGE'])->defaultValue('SMALL')->end()
+                ->integerNode('replicationRefreshTimeout')->min(1)->defaultValue(3600)->end()
+                ->integerNode('replicationRefreshPollInterval')->min(1)->defaultValue(30)->end()
                 ->booleanNode('skipCheck')->defaultFalse()->end()
                 ->booleanNode('synchronize')->defaultFalse()->end()
                 ->booleanNode('dryPremigrationCleanupRun')->defaultTrue()->end()

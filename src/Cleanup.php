@@ -10,6 +10,7 @@ use Keboola\SnowflakeDbAdapter\QueryBuilder;
 use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Snowflake\Connection;
 use ProjectMigrationTool\Snowflake\Helper;
+use ProjectMigrationTool\Snowflake\ReplicationGroup;
 use ProjectMigrationTool\ValueObject\FutureGrantToRole;
 use ProjectMigrationTool\ValueObject\GrantToRole;
 use ProjectMigrationTool\ValueObject\GrantToUser;
@@ -26,7 +27,39 @@ class Cleanup
         readonly Connection $sourceConnection,
         readonly Connection $destinationConnection,
         readonly LoggerInterface $logger,
+        readonly ?Connection $migrateConnection = null,
     ) {
+    }
+
+    public function teardownReplication(): void
+    {
+        if ($this->sourceConnection->getRegion() === $this->destinationConnection->getRegion()) {
+            // Same-region migration never created a replication group; nothing to tear down.
+            return;
+        }
+        if (!$this->migrateConnection) {
+            throw new UserException('Migration connection is not set');
+        }
+
+        $groupName = ReplicationGroup::buildName($this->config->getDatabases());
+
+        // Drop the replica group on the migrate account first, then the primary on source.
+        $this->logger->info(sprintf('Dropping replica replication group "%s" on migrate account.', $groupName));
+        $this->migrateConnection->query(ReplicationGroup::dropSql($groupName));
+
+        // Dropping a secondary replication group leaves its member databases behind as writable
+        // standalone databases. Drop them so their names are freed and they stop consuming storage
+        // on the migrate (landing-zone) account.
+        foreach ($this->config->getDatabases() as $database) {
+            $this->logger->info(sprintf('Dropping replica database "%s" on migrate account.', $database));
+            $this->migrateConnection->query(sprintf(
+                'DROP DATABASE IF EXISTS %s;',
+                Helper::quoteIdentifier($database)
+            ));
+        }
+
+        $this->logger->info(sprintf('Dropping replication group "%s" on source account.', $groupName));
+        $this->sourceConnection->query(ReplicationGroup::dropSql($groupName));
     }
 
     public function sourceAccount(): void

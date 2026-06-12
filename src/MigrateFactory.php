@@ -72,6 +72,7 @@ class MigrateFactory
             $this->sourceConnection,
             $this->targetConnection,
             $this->logger,
+            $this->migrateConnection ?? null,
         );
     }
 
@@ -81,9 +82,11 @@ class MigrateFactory
             throw new RuntimeException('Source connection is required for migration preparation');
         }
         return new PrepareMigration(
+            $this->config,
             $this->config->getDatabases(),
             $this->sourceConnection,
             $this->targetConnection,
+            $this->logger,
             $this->migrateConnection ?? null,
         );
     }

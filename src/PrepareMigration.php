@@ -5,16 +5,21 @@ declare(strict_types=1);
 namespace ProjectMigrationTool;
 
 use Keboola\Component\UserException;
+use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Snowflake\Helper;
+use ProjectMigrationTool\Snowflake\ReplicationGroup;
+use Psr\Log\LoggerInterface;
 
 class PrepareMigration
 {
     private const MIGRATION_SHARE_PREFIX = 'MIGRATION_SHARE_';
 
     public function __construct(
+        readonly Config $config,
         readonly array $databases,
         readonly Snowflake\Connection $sourceConnection,
         readonly Snowflake\Connection $destinationConnection,
+        readonly LoggerInterface $logger,
         readonly ?Snowflake\Connection $migrateConnection = null,
     ) {
     }
@@ -22,57 +27,73 @@ class PrepareMigration
     public function createReplication(): void
     {
         if ($this->sourceConnection->getRegion() === $this->destinationConnection->getRegion()) {
+            // Same-region migration uses sharing only; no replication group needed.
             return;
         }
         if (!$this->migrateConnection) {
             throw new UserException('Migration connection is not set');
         }
-        foreach ($this->databases as $database) {
-            // Allow replication on source database
-            $this->sourceConnection->query(sprintf(
-                'ALTER DATABASE %s ENABLE REPLICATION TO ACCOUNTS %s.%s;',
-                Helper::quoteIdentifier($database),
-                $this->migrateConnection->getRegion(),
-                $this->migrateConnection->getAccount()
-            ));
 
-            // Waiting for previous SQL query
-            sleep(5);
+        $groupName = ReplicationGroup::buildName($this->databases);
 
-            // Migration database sqls
-            $this->migrateConnection->query(sprintf(
-                'CREATE DATABASE IF NOT EXISTS %s AS REPLICA OF %s.%s.%s;',
-                Helper::quoteIdentifier($database),
-                $this->sourceConnection->getRegion(),
-                $this->sourceConnection->getAccount(),
-                Helper::quoteIdentifier($database)
-            ));
+        // 1. Create (or ensure) the replication group on the SOURCE account, allowing the migrate account.
+        $this->logger->info(sprintf('Ensuring replication group "%s" on source account.', $groupName));
+        $this->sourceConnection->query(ReplicationGroup::createOnSourceSql(
+            $groupName,
+            $this->databases,
+            $this->migrateConnection->getRegion(),
+            $this->migrateConnection->getAccount(),
+        ));
 
-            $this->migrateConnection->query(sprintf(
-                'USE DATABASE %s',
-                Helper::quoteIdentifier($database)
-            ));
+        // 2. Reconcile membership idempotently (handles re-runs where the database set changed).
+        $this->sourceConnection->query(ReplicationGroup::setAllowedDatabasesSql(
+            $groupName,
+            $this->databases,
+        ));
 
-            $this->migrateConnection->query('USE SCHEMA PUBLIC');
+        // 3. Create (or ensure) the replica replication group on the MIGRATE account.
+        $this->logger->info(sprintf('Ensuring replica replication group "%s" on migrate account.', $groupName));
+        $this->migrateConnection->query(ReplicationGroup::createReplicaSql(
+            $groupName,
+            $this->sourceConnection->getRegion(),
+            $this->sourceConnection->getAccount(),
+        ));
 
-            // Create and use warehouse for replicate data
-            $sql = <<<SQL
+        // 4. Ensure a warehouse to drive the refresh.
+        $this->ensureMigrateWarehouse();
+
+        // 5. Trigger the refresh on the migrate account and poll until complete.
+        $this->logger->info(sprintf('Refreshing replication group "%s".', $groupName));
+        $this->migrateConnection->query(ReplicationGroup::refreshSql($groupName));
+
+        $replicationGroup = new ReplicationGroup();
+        $migrateConnection = $this->migrateConnection;
+        $replicationGroup->waitForRefresh(
+            $groupName,
+            fetchProgress: fn(): array => $migrateConnection->fetchAll(
+                ReplicationGroup::refreshProgressSql($groupName)
+            ),
+            sleeper: fn(int $seconds): int => sleep($seconds),
+            clock: fn(): int => time(),
+            logger: $this->logger,
+            timeoutSeconds: $this->config->getReplicationRefreshTimeout(),
+            pollIntervalSeconds: $this->config->getReplicationRefreshPollInterval(),
+        );
+    }
+
+    private function ensureMigrateWarehouse(): void
+    {
+        assert($this->migrateConnection !== null);
+
+        $this->migrateConnection->query(<<<SQL
 CREATE WAREHOUSE IF NOT EXISTS "migrate"
     WITH WAREHOUSE_SIZE = 'Small'
         WAREHOUSE_TYPE = 'STANDARD'
         AUTO_SUSPEND = 300
         AUTO_RESUME = true
 ;
-SQL;
-            $this->migrateConnection->query($sql);
-            $this->migrateConnection->query('USE WAREHOUSE "migrate";');
-
-            // Run replicate of data
-            $this->migrateConnection->query(sprintf(
-                'ALTER DATABASE %s REFRESH',
-                Helper::quoteIdentifier($database)
-            ));
-        }
+SQL);
+        $this->migrateConnection->query('USE WAREHOUSE "migrate";');
     }
 
     public function createShare(): void

@@ -26,6 +26,16 @@ class Config extends BaseConfig
         return $this->getStringValue(['parameters', 'warehouseSize'], 'SMALL');
     }
 
+    public function getReplicationRefreshTimeout(): int
+    {
+        return $this->getIntValue(['parameters', 'replicationRefreshTimeout'], 3600);
+    }
+
+    public function getReplicationRefreshPollInterval(): int
+    {
+        return $this->getIntValue(['parameters', 'replicationRefreshPollInterval'], 30);
+    }
+
     public function getRunAction(): string
     {
         return $this->getStringValue(['parameters', 'action'], 'run');
