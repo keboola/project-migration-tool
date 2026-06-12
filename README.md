@@ -50,10 +50,33 @@ databases, the cleanup also drops those replica databases on the migrate account
 names are freed and they stop consuming storage. Same-region migrations do not use a
 replication group, so creation and teardown are no-ops.
 
-**Deployment prerequisite:** the configured source and migrate roles must hold the
-privilege to create and drop replication groups (`CREATE REPLICATION GROUP` on the source
-account, `CREATE REPLICATION GROUP ... AS REPLICA` on the migrate account, and `OWNERSHIP`
-to drop them). The tool runs these statements under the configured roles, not `ACCOUNTADMIN`.
+**Deployment prerequisites**
+
+The tool runs the replication-group statements under the configured roles (not
+`ACCOUNTADMIN`), so those roles must hold the `CREATE REPLICATION GROUP` privilege. Grant it
+(as `ACCOUNTADMIN`) on **both** accounts — on the source account to the configured source
+role, and on the migrate account to the configured migrate role:
+
+```sql
+-- On the SOURCE account (creates the primary replication group):
+GRANT CREATE REPLICATION GROUP ON ACCOUNT TO ROLE <source_role>;
+
+-- On the MIGRATE account (creates the secondary/replica replication group):
+GRANT CREATE REPLICATION GROUP ON ACCOUNT TO ROLE <migrate_role>;
+```
+
+Without these grants the run fails with `Insufficient privileges to operate on account ...
+must have CREATE REPLICATION GROUP granted on ACCOUNT`.
+
+If any database in `migrateDatabases` already has **standalone** database replication enabled
+(from the previous per-database approach, via `ALTER DATABASE ... ENABLE REPLICATION TO
+ACCOUNTS`), it must be disabled before it can be added to a replication group. Otherwise the
+run fails with `Database replication for '<db>' must be disabled before it can be added to a
+replication group`. Disable it on the **source** account for each affected database:
+
+```sql
+SELECT SYSTEM$DISABLE_DATABASE_REPLICATION('<database_name>');
+```
 
 Tunable parameters (optional):
 
