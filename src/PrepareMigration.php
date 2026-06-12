@@ -45,7 +45,9 @@ class PrepareMigration
             $this->migrateConnection->getAccount(),
         ));
 
-        // 2. Reconcile membership idempotently (handles re-runs where the database set changed).
+        // 2. Reconcile allowed databases idempotently. The group name is derived from the database
+        //    set, so a re-run of the same migration reuses the same group; this keeps its membership
+        //    in sync with the configured databases.
         $this->sourceConnection->query(ReplicationGroup::setAllowedDatabasesSql(
             $groupName,
             $this->databases,

@@ -22,7 +22,7 @@ class ReplicationGroupTest extends TestCase
         self::assertSame(
             'CREATE REPLICATION GROUP IF NOT EXISTS "MIGRATION_REPLICATION_GROUP" '
             . 'OBJECT_TYPES = DATABASES '
-            . 'ALLOWED_DATABASES "DB1", "DB2" '
+            . 'ALLOWED_DATABASES = "DB1", "DB2" '
             . 'ALLOWED_ACCOUNTS = AWS_US_WEST_2.XY12345;',
             $sql,
         );
@@ -37,7 +37,7 @@ class ReplicationGroupTest extends TestCase
 
         self::assertSame(
             'ALTER REPLICATION GROUP "MIGRATION_REPLICATION_GROUP" '
-            . 'SET ALLOWED_DATABASES "DB1", "DB2";',
+            . 'SET ALLOWED_DATABASES = "DB1", "DB2";',
             $sql,
         );
     }
@@ -68,7 +68,7 @@ class ReplicationGroupTest extends TestCase
     public function testRefreshProgressSql(): void
     {
         self::assertSame(
-            'SELECT * FROM TABLE(INFORMATION_SCHEMA.REPLICATION_GROUP_REFRESH_PROGRESS('
+            'SELECT * FROM TABLE(SNOWFLAKE.INFORMATION_SCHEMA.REPLICATION_GROUP_REFRESH_PROGRESS('
             . '\'MIGRATION_REPLICATION_GROUP\'));',
             ReplicationGroup::refreshProgressSql('MIGRATION_REPLICATION_GROUP'),
         );

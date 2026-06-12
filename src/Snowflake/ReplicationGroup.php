@@ -48,7 +48,7 @@ class ReplicationGroup
         return sprintf(
             'CREATE REPLICATION GROUP IF NOT EXISTS %s '
             . 'OBJECT_TYPES = DATABASES '
-            . 'ALLOWED_DATABASES %s '
+            . 'ALLOWED_DATABASES = %s '
             . 'ALLOWED_ACCOUNTS = %s.%s;',
             Helper::quoteIdentifier($groupName),
             self::quoteDatabaseList($databases),
@@ -63,7 +63,7 @@ class ReplicationGroup
     public static function setAllowedDatabasesSql(string $groupName, array $databases): string
     {
         return sprintf(
-            'ALTER REPLICATION GROUP %s SET ALLOWED_DATABASES %s;',
+            'ALTER REPLICATION GROUP %s SET ALLOWED_DATABASES = %s;',
             Helper::quoteIdentifier($groupName),
             self::quoteDatabaseList($databases),
         );
@@ -91,7 +91,7 @@ class ReplicationGroup
     public static function refreshProgressSql(string $groupName): string
     {
         return sprintf(
-            'SELECT * FROM TABLE(INFORMATION_SCHEMA.REPLICATION_GROUP_REFRESH_PROGRESS(%s));',
+            'SELECT * FROM TABLE(SNOWFLAKE.INFORMATION_SCHEMA.REPLICATION_GROUP_REFRESH_PROGRESS(%s));',
             QueryBuilder::quote($groupName),
         );
     }
