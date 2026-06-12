@@ -36,7 +36,9 @@ class PrepareMigration
 
         $groupName = ReplicationGroup::buildName($this->databases);
 
-        // 1. Create (or ensure) the replication group on the SOURCE account, allowing the migrate account.
+        // 1. Create (or ensure) the replication group on the SOURCE account, allowing the migrate
+        //    account. The group name is derived from the database set, so an existing group with
+        //    this name already has exactly these allowed databases (no membership reconcile needed).
         $this->logger->info(sprintf('Ensuring replication group "%s" on source account.', $groupName));
         $this->sourceConnection->query(ReplicationGroup::createOnSourceSql(
             $groupName,
@@ -45,15 +47,7 @@ class PrepareMigration
             $this->migrateConnection->getAccountName(),
         ));
 
-        // 2. Reconcile allowed databases idempotently. The group name is derived from the database
-        //    set, so a re-run of the same migration reuses the same group; this keeps its membership
-        //    in sync with the configured databases.
-        $this->sourceConnection->query(ReplicationGroup::setAllowedDatabasesSql(
-            $groupName,
-            $this->databases,
-        ));
-
-        // 3. Create (or ensure) the replica replication group on the MIGRATE account.
+        // 2. Create (or ensure) the replica replication group on the MIGRATE account.
         $this->logger->info(sprintf('Ensuring replica replication group "%s" on migrate account.', $groupName));
         $this->migrateConnection->query(ReplicationGroup::createReplicaSql(
             $groupName,
@@ -61,10 +55,10 @@ class PrepareMigration
             $this->sourceConnection->getAccountName(),
         ));
 
-        // 4. Ensure a warehouse to drive the refresh.
+        // 3. Ensure a warehouse to drive the refresh.
         $this->ensureMigrateWarehouse();
 
-        // 5. Trigger the refresh on the migrate account and poll until complete.
+        // 4. Trigger the refresh on the migrate account and poll until complete.
         $this->logger->info(sprintf('Refreshing replication group "%s".', $groupName));
         $this->migrateConnection->query(ReplicationGroup::refreshSql($groupName));
 

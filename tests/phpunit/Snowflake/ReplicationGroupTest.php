@@ -28,20 +28,6 @@ class ReplicationGroupTest extends TestCase
         );
     }
 
-    public function testSetAllowedDatabasesSql(): void
-    {
-        $sql = ReplicationGroup::setAllowedDatabasesSql(
-            'MIGRATION_REPLICATION_GROUP',
-            ['DB1', 'DB2'],
-        );
-
-        self::assertSame(
-            'ALTER REPLICATION GROUP "MIGRATION_REPLICATION_GROUP" '
-            . 'SET ALLOWED_DATABASES = "DB1", "DB2";',
-            $sql,
-        );
-    }
-
     public function testCreateReplicaSql(): void
     {
         $sql = ReplicationGroup::createReplicaSql(

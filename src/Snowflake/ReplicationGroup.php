@@ -66,18 +66,6 @@ class ReplicationGroup
     }
 
     /**
-     * @param string[] $databases
-     */
-    public static function setAllowedDatabasesSql(string $groupName, array $databases): string
-    {
-        return sprintf(
-            'ALTER REPLICATION GROUP %s SET ALLOWED_DATABASES = %s;',
-            Helper::quoteIdentifier($groupName),
-            self::quoteDatabaseList($databases),
-        );
-    }
-
-    /**
      * References the primary group by the source account's organization account identifier
      * (`<organization_name>.<account_name>.<group_name>`).
      */
