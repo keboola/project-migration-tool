@@ -15,15 +15,15 @@ class ReplicationGroupTest extends TestCase
         $sql = ReplicationGroup::createOnSourceSql(
             'MIGRATION_REPLICATION_GROUP',
             ['DB1', 'DB2'],
-            'AWS_US_WEST_2',
-            'XY12345',
+            'MY_ORG',
+            'MIGRATE_ACCOUNT',
         );
 
         self::assertSame(
             'CREATE REPLICATION GROUP IF NOT EXISTS "MIGRATION_REPLICATION_GROUP" '
             . 'OBJECT_TYPES = DATABASES '
             . 'ALLOWED_DATABASES = "DB1", "DB2" '
-            . 'ALLOWED_ACCOUNTS = AWS_US_WEST_2.XY12345;',
+            . 'ALLOWED_ACCOUNTS = MY_ORG.MIGRATE_ACCOUNT;',
             $sql,
         );
     }
@@ -46,13 +46,13 @@ class ReplicationGroupTest extends TestCase
     {
         $sql = ReplicationGroup::createReplicaSql(
             'MIGRATION_REPLICATION_GROUP',
-            'AWS_US_EAST_1',
-            'SRCACCT',
+            'MY_ORG',
+            'SOURCE_ACCOUNT',
         );
 
         self::assertSame(
             'CREATE REPLICATION GROUP IF NOT EXISTS "MIGRATION_REPLICATION_GROUP" '
-            . 'AS REPLICA OF AWS_US_EAST_1.SRCACCT."MIGRATION_REPLICATION_GROUP";',
+            . 'AS REPLICA OF MY_ORG.SOURCE_ACCOUNT."MIGRATION_REPLICATION_GROUP";',
             $sql,
         );
     }

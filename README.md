@@ -68,6 +68,13 @@ GRANT CREATE REPLICATION GROUP ON ACCOUNT TO ROLE <migrate_role>;
 Without these grants the run fails with `Insufficient privileges to operate on account ...
 must have CREATE REPLICATION GROUP granted on ACCOUNT`.
 
+Replication groups authorize accounts by their **organization account identifier**
+(`<organization_name>.<account_name>`), not by the legacy `<region>.<account_locator>` form.
+The tool reads these via `CURRENT_ORGANIZATION_NAME()` / `CURRENT_ACCOUNT_NAME()`. Both the
+source and migrate accounts must therefore belong to the **same Snowflake organization** and
+be enabled for replication; otherwise the secondary creation fails with `This account is not
+authorized to create a secondary replica of this primary replication group`.
+
 If any database in `migrateDatabases` already has **standalone** database replication enabled
 (from the previous per-database approach, via `ALTER DATABASE ... ENABLE REPLICATION TO
 ACCOUNTS`), it must be disabled before it can be added to a replication group. Otherwise the

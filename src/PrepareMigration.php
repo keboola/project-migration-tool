@@ -41,8 +41,8 @@ class PrepareMigration
         $this->sourceConnection->query(ReplicationGroup::createOnSourceSql(
             $groupName,
             $this->databases,
-            $this->migrateConnection->getRegion(),
-            $this->migrateConnection->getAccount(),
+            $this->migrateConnection->getOrganizationName(),
+            $this->migrateConnection->getAccountName(),
         ));
 
         // 2. Reconcile allowed databases idempotently. The group name is derived from the database
@@ -57,8 +57,8 @@ class PrepareMigration
         $this->logger->info(sprintf('Ensuring replica replication group "%s" on migrate account.', $groupName));
         $this->migrateConnection->query(ReplicationGroup::createReplicaSql(
             $groupName,
-            $this->sourceConnection->getRegion(),
-            $this->sourceConnection->getAccount(),
+            $this->sourceConnection->getOrganizationName(),
+            $this->sourceConnection->getAccountName(),
         ));
 
         // 4. Ensure a warehouse to drive the refresh.

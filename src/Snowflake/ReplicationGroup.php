@@ -37,13 +37,17 @@ class ReplicationGroup
     }
 
     /**
+     * Replication groups authorize accounts by their organization account identifier
+     * (`<organization_name>.<account_name>`), not by the legacy `<region>.<account_locator>`
+     * form, so the migrate account is passed as organization name + account name.
+     *
      * @param string[] $databases
      */
     public static function createOnSourceSql(
         string $groupName,
         array $databases,
-        string $migrateRegion,
-        string $migrateAccount,
+        string $migrateOrganizationName,
+        string $migrateAccountName,
     ): string {
         return sprintf(
             'CREATE REPLICATION GROUP IF NOT EXISTS %s '
@@ -52,8 +56,8 @@ class ReplicationGroup
             . 'ALLOWED_ACCOUNTS = %s.%s;',
             Helper::quoteIdentifier($groupName),
             self::quoteDatabaseList($databases),
-            $migrateRegion,
-            $migrateAccount,
+            $migrateOrganizationName,
+            $migrateAccountName,
         );
     }
 
@@ -69,16 +73,20 @@ class ReplicationGroup
         );
     }
 
+    /**
+     * References the primary group by the source account's organization account identifier
+     * (`<organization_name>.<account_name>.<group_name>`).
+     */
     public static function createReplicaSql(
         string $groupName,
-        string $sourceRegion,
-        string $sourceAccount,
+        string $sourceOrganizationName,
+        string $sourceAccountName,
     ): string {
         return sprintf(
             'CREATE REPLICATION GROUP IF NOT EXISTS %s AS REPLICA OF %s.%s.%s;',
             Helper::quoteIdentifier($groupName),
-            $sourceRegion,
-            $sourceAccount,
+            $sourceOrganizationName,
+            $sourceAccountName,
             Helper::quoteIdentifier($groupName),
         );
     }
