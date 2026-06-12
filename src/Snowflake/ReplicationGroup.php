@@ -23,6 +23,10 @@ class ReplicationGroup
      * group name. The database list is upper-cased and sorted before hashing so neither the
      * order nor the casing in the configuration affects the result.
      *
+     * The whole name is upper-cased so it matches Snowflake's default identifier casing. This
+     * matters for REPLICATION_GROUP_REFRESH_PROGRESS, which folds its string argument to upper
+     * case: a quoted lower-case group name would be stored case-sensitively and never match.
+     *
      * @param string[] $databases
      */
     public static function buildName(array $databases): string
@@ -33,7 +37,7 @@ class ReplicationGroup
         );
         sort($normalized);
 
-        return self::NAME_PREFIX . substr(hash('sha256', implode(',', $normalized)), 0, 32);
+        return self::NAME_PREFIX . strtoupper(substr(hash('sha256', implode(',', $normalized)), 0, 32));
     }
 
     /**

@@ -89,6 +89,9 @@ class ReplicationGroupTest extends TestCase
 
         self::assertSame($name1, $name2);
         self::assertStringStartsWith('MIGRATION_RG_', $name1);
+        // Must be upper-cased so REPLICATION_GROUP_REFRESH_PROGRESS (which folds its string
+        // argument to upper case) can match the created group.
+        self::assertSame(strtoupper($name1), $name1);
     }
 
     public function testBuildNameIsCaseInsensitive(): void
