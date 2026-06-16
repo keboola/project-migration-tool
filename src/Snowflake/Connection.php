@@ -18,6 +18,10 @@ class Connection extends AdapterConnection
 
     private ?string $account = null;
 
+    private ?string $organizationName = null;
+
+    private ?string $accountName = null;
+
     private ?string $actualRole = null;
 
     private string $defaultRole;
@@ -81,6 +85,28 @@ class Connection extends AdapterConnection
         }
 
         return $this->account;
+    }
+
+    public function getOrganizationName(): string
+    {
+        if (!$this->organizationName) {
+            $result = $this->fetchAll('SELECT CURRENT_ORGANIZATION_NAME() AS "organizationName";');
+
+            $this->organizationName = $result[0]['organizationName'];
+        }
+
+        return $this->organizationName;
+    }
+
+    public function getAccountName(): string
+    {
+        if (!$this->accountName) {
+            $result = $this->fetchAll('SELECT CURRENT_ACCOUNT_NAME() AS "accountName";');
+
+            $this->accountName = $result[0]['accountName'];
+        }
+
+        return $this->accountName;
     }
 
     public function getCurrentRole(): string
