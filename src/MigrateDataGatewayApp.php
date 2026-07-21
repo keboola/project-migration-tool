@@ -10,18 +10,18 @@ use Keboola\StorageApi\Components;
 use Keboola\StorageApi\Options\Components\Configuration;
 use Keboola\StorageApi\Options\Components\ListComponentConfigurationsOptions;
 use Keboola\StorageApi\WorkspaceLoginType;
+use Keboola\StorageApiBranch\Factory\AuthType;
 use Keboola\StorageApiBranch\Factory\ClientOptions;
-use Keboola\StorageApiBranch\Factory\StorageClientRequestFactory;
+use Keboola\StorageApiBranch\Factory\StorageClientPlainFactory;
 use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Snowflake\Connection;
 use ProjectMigrationTool\Snowflake\Helper;
 use ProjectMigrationTool\ValueObject\GrantToRole;
 use Psr\Log\LoggerInterface;
-use Symfony\Component\HttpFoundation\Request;
 
 class MigrateDataGatewayApp
 {
-    private StorageClientRequestFactory $storageClientFactory;
+    private StorageClientPlainFactory $storageClientFactory;
 
     private const COMPONENT_ID = 'keboola.app-data-gateway';
 
@@ -31,7 +31,19 @@ class MigrateDataGatewayApp
         private readonly Config $config,
     ) {
         $clientOptions = new ClientOptions(url: $config->getProjectsUrlStack());
-        $this->storageClientFactory = new StorageClientRequestFactory($clientOptions);
+        $this->storageClientFactory = new StorageClientPlainFactory($clientOptions);
+    }
+
+    public static function createClientOptionsForToken(string $projectToken): ClientOptions
+    {
+        // StorageClientPlainFactory does not derive a token, auth type or run ID from an HTTP request
+        // (unlike StorageClientRequestFactory), so set them explicitly here. The run-* prefix mirrors
+        // the run ID the request factory used to generate, keeping Storage job tracing consistent.
+        return new ClientOptions(
+            token: $projectToken,
+            runId: uniqid('run-'),
+            authType: AuthType::STORAGE_TOKEN,
+        );
     }
 
     private function generatePublicKey(): string
@@ -57,8 +69,9 @@ class MigrateDataGatewayApp
     public function migrate(array $projectsToken): void
     {
         foreach ($projectsToken as $projectToken) {
-            $request = new Request(server: ['HTTP_X-StorageApi-Token' => $projectToken]);
-            $basicClient = $this->storageClientFactory->createClientWrapper($request)->getBasicClient();
+            $basicClient = $this->storageClientFactory
+                ->createClientWrapper(self::createClientOptionsForToken($projectToken))
+                ->getBasicClient();
             $verifyToken = $basicClient->verifyToken();
 
             $this->logger->info(sprintf(
