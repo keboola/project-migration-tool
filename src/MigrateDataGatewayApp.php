@@ -10,12 +10,12 @@ use Keboola\StorageApi\Components;
 use Keboola\StorageApi\Options\Components\Configuration;
 use Keboola\StorageApi\Options\Components\ListComponentConfigurationsOptions;
 use Keboola\StorageApi\WorkspaceLoginType;
-use Keboola\StorageApiBranch\Factory\AuthType;
 use Keboola\StorageApiBranch\Factory\ClientOptions;
 use Keboola\StorageApiBranch\Factory\StorageClientPlainFactory;
 use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Snowflake\Connection;
 use ProjectMigrationTool\Snowflake\Helper;
+use ProjectMigrationTool\Storage\ClientOptionsFactory;
 use ProjectMigrationTool\ValueObject\GrantToRole;
 use Psr\Log\LoggerInterface;
 
@@ -32,18 +32,6 @@ class MigrateDataGatewayApp
     ) {
         $clientOptions = new ClientOptions(url: $config->getProjectsUrlStack());
         $this->storageClientFactory = new StorageClientPlainFactory($clientOptions);
-    }
-
-    public static function createClientOptionsForToken(string $projectToken): ClientOptions
-    {
-        // StorageClientPlainFactory does not derive a token, auth type or run ID from an HTTP request
-        // (unlike StorageClientRequestFactory), so set them explicitly here. The run-* prefix mirrors
-        // the run ID the request factory used to generate, keeping Storage job tracing consistent.
-        return new ClientOptions(
-            token: $projectToken,
-            runId: uniqid('run-'),
-            authType: AuthType::STORAGE_TOKEN,
-        );
     }
 
     private function generatePublicKey(): string
@@ -70,7 +58,7 @@ class MigrateDataGatewayApp
     {
         foreach ($projectsToken as $projectToken) {
             $basicClient = $this->storageClientFactory
-                ->createClientWrapper(self::createClientOptionsForToken($projectToken))
+                ->createClientWrapper(ClientOptionsFactory::createForToken($projectToken))
                 ->getBasicClient();
             $verifyToken = $basicClient->verifyToken();
 
