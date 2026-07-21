@@ -11,9 +11,9 @@ class ClientOptionsFactory
 {
     public static function createForToken(string $projectToken): ClientOptions
     {
-        // StorageClientPlainFactory does not derive a token, auth type or run ID from an HTTP request
-        // (unlike StorageClientRequestFactory), so set them explicitly here. The run-* prefix mirrors
-        // the run ID the request factory used to generate, keeping Storage job tracing consistent.
+        // Authenticate as the project's Storage token: STORAGE_TOKEN sends it in the
+        // X-StorageApi-Token header, and the generated run-* run ID tags the Storage jobs
+        // this migration triggers so they remain traceable.
         return new ClientOptions(
             token: $projectToken,
             runId: uniqid('run-'),
