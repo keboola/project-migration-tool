@@ -11,17 +11,17 @@ use Keboola\StorageApi\Options\Components\Configuration;
 use Keboola\StorageApi\Options\Components\ListComponentConfigurationsOptions;
 use Keboola\StorageApi\WorkspaceLoginType;
 use Keboola\StorageApiBranch\Factory\ClientOptions;
-use Keboola\StorageApiBranch\Factory\StorageClientRequestFactory;
+use Keboola\StorageApiBranch\Factory\StorageClientPlainFactory;
 use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Snowflake\Connection;
 use ProjectMigrationTool\Snowflake\Helper;
+use ProjectMigrationTool\Storage\ClientOptionsFactory;
 use ProjectMigrationTool\ValueObject\GrantToRole;
 use Psr\Log\LoggerInterface;
-use Symfony\Component\HttpFoundation\Request;
 
 class MigrateDataGatewayApp
 {
-    private StorageClientRequestFactory $storageClientFactory;
+    private StorageClientPlainFactory $storageClientFactory;
 
     private const COMPONENT_ID = 'keboola.app-data-gateway';
 
@@ -31,7 +31,7 @@ class MigrateDataGatewayApp
         private readonly Config $config,
     ) {
         $clientOptions = new ClientOptions(url: $config->getProjectsUrlStack());
-        $this->storageClientFactory = new StorageClientRequestFactory($clientOptions);
+        $this->storageClientFactory = new StorageClientPlainFactory($clientOptions);
     }
 
     private function generatePublicKey(): string
@@ -57,8 +57,9 @@ class MigrateDataGatewayApp
     public function migrate(array $projectsToken): void
     {
         foreach ($projectsToken as $projectToken) {
-            $request = new Request(server: ['HTTP_X-StorageApi-Token' => $projectToken]);
-            $basicClient = $this->storageClientFactory->createClientWrapper($request)->getBasicClient();
+            $basicClient = $this->storageClientFactory
+                ->createClientWrapper(ClientOptionsFactory::createForToken($projectToken))
+                ->getBasicClient();
             $verifyToken = $basicClient->verifyToken();
 
             $this->logger->info(sprintf(
