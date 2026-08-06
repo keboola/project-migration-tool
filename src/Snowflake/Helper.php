@@ -157,4 +157,42 @@ class Helper
         }
         return QueryBuilder::quoteIdentifier($str);
     }
+
+    /**
+     * Checks if a schema name belongs to a dev branch.
+     * Dev branch schemas follow the pattern: {branchId}_{bucketId}
+     * where branchId is a numeric value and bucketId starts with "in." or "out."
+     *
+     * Examples of dev branch schemas:
+     * - 14107_in.c-my-bucket
+     * - 14107_out.c-my-bucket
+     *
+     * @param string $schemaName The schema name to check
+     * @return bool True if the schema belongs to a dev branch
+     */
+    public static function isDevBranchSchema(string $schemaName): bool
+    {
+        // Dev branch schemas have pattern: {numericBranchId}_{bucketId}
+        // where bucketId starts with "in." or "out."
+        return (bool) preg_match('/^\d+_(in\.|out\.)/', $schemaName);
+    }
+
+    /**
+     * Checks if a role name belongs to a workspace (including dev branch workspaces).
+     * Workspace roles follow these patterns:
+     * - Default branch: KEBOOLA_WORKSPACE_{workspaceId} or SAPI_WORKSPACE_{workspaceId}
+     * - Dev branch: KEBOOLA_{branchId}_WORKSPACE_{workspaceId} or SAPI_{branchId}_WORKSPACE_{workspaceId}
+     *
+     * @param string $roleName The role name to check
+     * @return bool True if the role belongs to a workspace
+     */
+    public static function isWorkspaceRole(string $roleName): bool
+    {
+        // Match both default branch and dev branch workspace patterns:
+        // - KEBOOLA_WORKSPACE_123456 (default branch)
+        // - KEBOOLA_14107_WORKSPACE_123456 (dev branch with branchId 14107)
+        // - SAPI_WORKSPACE_123456 (legacy default branch)
+        // - SAPI_14107_WORKSPACE_123456 (legacy dev branch)
+        return (bool) preg_match('/^(KEBOOLA|SAPI|sapi)_(\d+_)?WORKSPACE_/', $roleName);
+    }
 }
