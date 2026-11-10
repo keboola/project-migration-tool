@@ -126,6 +126,15 @@ The `runCheckMigratedData` action compares the source and the target account. It
 `SHOW` commands, so it shows the current state and can run right after the migration.
 You do not need to wait for `SNOWFLAKE.ACCOUNT_USAGE` to catch up, and no warehouse is used.
 
+**When to run it:** after `runMigrateData` and before `runCleanup`. Keep the source project frozen
+(maintenance mode) from the data migration until the check ends; otherwise new writes change the
+row counts and the check fails.
+
+The schemas, tables and views of each database are listed with the database owner role on both accounts.
+Before `runCleanup` the migration users already have this role. After `runCleanup` the target user has
+only the configured target role, so the check grants the database role to the user and revokes it at the
+end. If the configured role cannot grant it, the job fails with an error that says so.
+
 For each database in `migrateDatabases` the check compares:
 
 - the database itself: if it does not exist on the target account, this is reported and its schemas,
@@ -134,14 +143,25 @@ For each database in `migrateDatabases` the check compares:
 - tables: `name`, `schema_name`, `kind`, `rows`, `owner`
 - views: `name`, `schema_name`, `owner`
 - the database owner role and all roles it owns (also nested), discovered on both accounts:
-  roles (`name`, `comment`, `owner`), grants to these roles and grants of these roles
-- users owned by these roles: `name`, `login_name`, `display_name`, `first_name`, `last_name`,
-  `email`, `default_warehouse`, `default_namespace`, `default_role`, `owner`
+  roles (`name`, `owner`), grants to these roles and grants of these roles
+- users owned by these roles: `name`, `login_name`, `display_name`, `default_warehouse`,
+  `default_namespace`, `default_role`, `owner`
 
-Account-level grants are compared without the account name, because it differs between accounts.
-Grants of roles to the configured migration user (`credentials.source.username` on the source account,
-`credentials.target.username` on the target account) are not compared, because the migration itself
-creates them on one account only. The job log shows how many were skipped on each account.
+Fields the migration does not copy (the role `comment`, the user `first_name`, `last_name` and `email`)
+are not compared. Grants are compared the way the migration creates them:
+
+- Snowflake internal `USER$...` grants are skipped on both accounts.
+- Warehouse names in source grants are renamed from `credentials.source.warehouse` to
+  `credentials.target.warehouse`, as the migration does. The users' `default_warehouse` is not renamed,
+  because the migration copies it as it is.
+- `granted_by = ACCOUNTADMIN` on the source is expected as the configured target role on the target.
+- Account-level grants are compared without the account name, because it differs between accounts.
+- Grants on the `<DB>_SHARE` and `<DB>_OLD` databases are skipped on both accounts.
+- Grants of roles to the configured migration user (`credentials.source.username` on the source account,
+  `credentials.target.username` on the target account) are skipped, because the migration itself
+  creates them on one account only.
+
+The job log shows how many grants were skipped on each account.
 The check does not compare the data in the tables, only the row counts.
 
 Each difference is logged as a warning. If there are any differences, the job fails and the
