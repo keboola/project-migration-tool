@@ -128,6 +128,8 @@ You do not need to wait for `SNOWFLAKE.ACCOUNT_USAGE` to catch up, and no wareho
 
 For each database in `migrateDatabases` the check compares:
 
+- the database itself: if it does not exist on the target account, this is reported and its schemas,
+  tables and views are not checked
 - schemas (except `INFORMATION_SCHEMA` and `PUBLIC`)
 - tables: `name`, `schema_name`, `kind`, `rows`, `owner`
 - views: `name`, `schema_name`, `owner`
@@ -137,6 +139,9 @@ For each database in `migrateDatabases` the check compares:
   `email`, `default_warehouse`, `default_namespace`, `default_role`, `owner`
 
 Account-level grants are compared without the account name, because it differs between accounts.
+Grants of roles to the configured migration user (`credentials.source.username` on the source account,
+`credentials.target.username` on the target account) are not compared, because the migration itself
+creates them on one account only. The job log shows how many were skipped on each account.
 The check does not compare the data in the tables, only the row counts.
 
 Each difference is logged as a warning. If there are any differences, the job fails and the

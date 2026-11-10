@@ -35,7 +35,7 @@ class MigrationCheckerTest extends TestCase
         );
 
         self::assertTrue($this->logger->hasInfoThatContains(
-            'Post-migration check passed. Compared items: Schemas: 1, Tables: 1, Views: 1, Users: 1, '
+            'Post-migration check passed. Compared items: Databases: 1, Schemas: 1, Tables: 1, Views: 1, Users: 1, '
             . 'Grants of roles: 2, Roles: 2, Grants to roles: 5.',
         ));
         self::assertSame([], $this->getWarnings());
@@ -129,6 +129,113 @@ class MigrationCheckerTest extends TestCase
             },
             'Users "KEBOOLA_1": first_name: John -> Doe, last_name: Doe -> John',
         ];
+    }
+
+    public function testGrantsOfRolesToMigrationUserAreExcluded(): void
+    {
+        $source = FakeSnowflakeAccount::keboolaProject('SOURCE_ACCOUNT');
+        $source->grantsOfRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantOfRole('KEBOOLA_1', 'USER', 'SOURCE_MIGRATE');
+        $target = FakeSnowflakeAccount::keboolaProject('TARGET_ACCOUNT');
+        $target->grantsOfRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantOfRole('KEBOOLA_1', 'USER', 'TARGET_MIGRATE');
+        $target->grantsOfRole['KEBOOLA_1_RO'][] = FakeSnowflakeAccount::grantOfRole(
+            'KEBOOLA_1_RO',
+            'USER',
+            'TARGET_MIGRATE',
+        );
+
+        $this->runCheck($source, $target);
+
+        self::assertTrue($this->logger->hasInfoThatContains('Post-migration check passed.'));
+        self::assertTrue($this->logger->hasInfoThatContains(
+            'Excluded 1 grants of roles to the migration user "SOURCE_MIGRATE" on the source account.',
+        ));
+        self::assertTrue($this->logger->hasInfoThatContains(
+            'Excluded 2 grants of roles to the migration user "TARGET_MIGRATE" on the target account.',
+        ));
+        self::assertSame([], $this->getWarnings());
+    }
+
+    /**
+     * @dataProvider grantOfRoleToOtherGranteeProvider
+     */
+    public function testGrantOfRoleToOtherGranteeIsReported(
+        string $grantedTo,
+        string $granteeName,
+        string $expectedDifference,
+    ): void {
+        $source = FakeSnowflakeAccount::keboolaProject('SOURCE_ACCOUNT');
+        $source->grantsOfRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantOfRole('KEBOOLA_1', $grantedTo, $granteeName);
+
+        try {
+            $this->runCheck($source, FakeSnowflakeAccount::keboolaProject('TARGET_ACCOUNT'));
+            self::fail('UserException was expected.');
+        } catch (UserException $e) {
+            self::assertStringContainsString('- ' . $expectedDifference, $e->getMessage());
+        }
+        self::assertSame(['Post-migration check difference: ' . $expectedDifference], $this->getWarnings());
+    }
+
+    public static function grantOfRoleToOtherGranteeProvider(): Generator
+    {
+        yield 'migration user of the other account' => [
+            'grantedTo' => 'USER',
+            'granteeName' => 'TARGET_MIGRATE',
+            'expectedDifference' => 'Grants of roles "KEBOOLA_1 TO USER TARGET_MIGRATE BY KEBOOLA_STORAGE": '
+                . 'missing in target account',
+        ];
+        yield 'user with a similar name' => [
+            'grantedTo' => 'USER',
+            'granteeName' => 'SOURCE_MIGRATE_2',
+            'expectedDifference' => 'Grants of roles "KEBOOLA_1 TO USER SOURCE_MIGRATE_2 BY KEBOOLA_STORAGE": '
+                . 'missing in target account',
+        ];
+        yield 'role with the migration user name' => [
+            'grantedTo' => 'ROLE',
+            'granteeName' => 'SOURCE_MIGRATE',
+            'expectedDifference' => 'Grants of roles "KEBOOLA_1 TO ROLE SOURCE_MIGRATE BY KEBOOLA_STORAGE": '
+                . 'missing in target account',
+        ];
+        yield 'migration role' => [
+            'grantedTo' => 'ROLE',
+            'granteeName' => 'SOURCE_MAIN_MIGRATE',
+            'expectedDifference' => 'Grants of roles "KEBOOLA_1 TO ROLE SOURCE_MAIN_MIGRATE BY KEBOOLA_STORAGE": '
+                . 'missing in target account',
+        ];
+    }
+
+    public function testRowsWithSameIdentityArePairedRegardlessOfOrder(): void
+    {
+        $grantedByA = FakeSnowflakeAccount::grantToRole('SELECT', 'TABLE', 'DB1.S1.T1', 'KEBOOLA_1_RO', 'false', 'A');
+        $grantedByB = FakeSnowflakeAccount::grantToRole('SELECT', 'TABLE', 'DB1.S1.T1', 'KEBOOLA_1_RO', 'false', 'B');
+        $source = FakeSnowflakeAccount::keboolaProject('SOURCE_ACCOUNT');
+        $source->grantsToRole['KEBOOLA_1_RO'] = [$grantedByA, $grantedByB];
+        $target = FakeSnowflakeAccount::keboolaProject('TARGET_ACCOUNT');
+        $target->grantsToRole['KEBOOLA_1_RO'] = [$grantedByB, $grantedByA];
+
+        $this->runCheck($source, $target);
+
+        self::assertTrue($this->logger->hasInfoThatContains('Post-migration check passed.'));
+        self::assertSame([], $this->getWarnings());
+    }
+
+    public function testDatabaseMissingOnTargetIsReported(): void
+    {
+        $target = FakeSnowflakeAccount::keboolaProject('TARGET_ACCOUNT');
+        $target->databases = ['db1', 'DB1_SHARE'];
+
+        try {
+            $this->runCheck(FakeSnowflakeAccount::keboolaProject('SOURCE_ACCOUNT'), $target);
+            self::fail('UserException was expected.');
+        } catch (UserException $e) {
+            self::assertStringContainsString(
+                'Post-migration check found 1 differences (Databases: 1).',
+                $e->getMessage(),
+            );
+        }
+        self::assertSame(
+            ['Post-migration check difference: Databases "DB1": missing in target account'],
+            $this->getWarnings(),
+        );
     }
 
     public function testRoleDiscoveredOnlyOnSourceIsReported(): void
@@ -240,8 +347,8 @@ class MigrationCheckerTest extends TestCase
                     'migrateDatabases' => ['DB1'],
                     'checkReportOnly' => $reportOnly,
                     'credentials' => [
-                        'source' => $this->credentials('SOURCE_MAIN_MIGRATE'),
-                        'target' => $this->credentials('TARGET_MAIN_MIGRATE'),
+                        'source' => $this->credentials('SOURCE_MIGRATE', 'SOURCE_MAIN_MIGRATE'),
+                        'target' => $this->credentials('TARGET_MIGRATE', 'TARGET_MAIN_MIGRATE'),
                     ],
                 ],
             ],
@@ -255,11 +362,11 @@ class MigrationCheckerTest extends TestCase
     /**
      * @return array<string, string>
      */
-    private function credentials(string $role): array
+    private function credentials(string $user, string $role): array
     {
         return [
             'host' => 'host',
-            'username' => 'user',
+            'username' => $user,
             '#password' => 'password',
             'warehouse' => 'WH',
             'role' => $role,

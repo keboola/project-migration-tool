@@ -14,6 +14,9 @@ class FakeSnowflakeAccount
     /** @var array<int, array<string, string>> */
     public array $roles = [];
 
+    /** @var string[] */
+    public array $databases = ['DB1', 'DB1_SHARE'];
+
     /** @var array<int, array<string, string>> */
     public array $users = [];
 
@@ -109,6 +112,7 @@ class FakeSnowflakeAccount
         string $name,
         string $granteeName,
         string $grantOption = 'false',
+        string $grantedBy = 'KEBOOLA_STORAGE',
     ): array {
         return [
             'created_on' => '2024-01-01',
@@ -118,7 +122,7 @@ class FakeSnowflakeAccount
             'granted_to' => 'ROLE',
             'grantee_name' => $granteeName,
             'grant_option' => $grantOption,
-            'granted_by' => 'KEBOOLA_STORAGE',
+            'granted_by' => $grantedBy,
         ];
     }
 
@@ -168,7 +172,17 @@ class FakeSnowflakeAccount
         if (preg_match('/^SHOW GRANTS OF ROLE "(.+)"$/', $sql, $matches)) {
             return $this->grantsOfRole[$matches[1]] ?? throw new RuntimeException('Role does not exist: ' . $sql);
         }
+        if (preg_match('/^SHOW DATABASES LIKE \'(.+)\'$/', $sql, $matches)) {
+            $pattern = '/^' . str_replace(['_', '%'], ['.', '.*'], preg_quote($matches[1], '/')) . '$/i';
+            return array_values(array_map(
+                fn(string $database) => ['name' => $database],
+                array_filter($this->databases, fn(string $database) => preg_match($pattern, $database) === 1),
+            ));
+        }
         if (preg_match('/^SHOW SCHEMAS IN DATABASE "(.+)"$/', $sql, $matches)) {
+            if (!in_array($matches[1], $this->databases, true)) {
+                throw new RuntimeException('Database does not exist: ' . $sql);
+            }
             return $this->schemas[$matches[1]] ?? throw new RuntimeException('Database does not exist: ' . $sql);
         }
         if (preg_match('/^SHOW TABLES IN SCHEMA "(.+)"\."(.+)" LIMIT \d+$/', $sql, $matches)) {

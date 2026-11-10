@@ -12,6 +12,8 @@ use Psr\Log\LoggerInterface;
  */
 class StructureComparison
 {
+    public const GROUP_DATABASES = 'Databases';
+
     public const GROUP_SCHEMAS = 'Schemas';
 
     public const GROUP_TABLES = 'Tables';
@@ -31,6 +33,7 @@ class StructureComparison
 
     /** @var array<string, int> */
     private array $comparedItemCounts = [
+        self::GROUP_DATABASES => 0,
         self::GROUP_SCHEMAS => 0,
         self::GROUP_TABLES => 0,
         self::GROUP_VIEWS => 0,
@@ -131,19 +134,24 @@ class StructureComparison
      */
     private function indexByItemName(array $rows, Closure $itemName, array $fields): array
     {
-        $items = [];
+        $valuesByName = [];
         foreach ($rows as $row) {
-            // One item can appear twice, e.g. the same privilege granted by two different roles.
-            $baseName = $itemName($row);
-            $name = $baseName;
-            for ($i = 2; isset($items[$name]); $i++) {
-                $name = sprintf('%s #%d', $baseName, $i);
-            }
             $values = [];
             foreach ($fields as $field) {
                 $values[$field] = isset($row[$field]) ? (string) $row[$field] : null;
             }
-            $items[$name] = $values;
+            $valuesByName[$itemName($row)][] = $values;
+        }
+
+        $items = [];
+        foreach ($valuesByName as $baseName => $sameNameValues) {
+            // One item can appear twice, e.g. the same privilege granted by two different roles.
+            // SHOW output order can differ between accounts, so sort before numbering the copies.
+            usort($sameNameValues, fn(array $a, array $b) => serialize($a) <=> serialize($b));
+            foreach ($sameNameValues as $index => $values) {
+                $name = $index === 0 ? (string) $baseName : sprintf('%s #%d', $baseName, $index + 1);
+                $items[$name] = $values;
+            }
         }
         return $items;
     }

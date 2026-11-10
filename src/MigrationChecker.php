@@ -71,6 +71,10 @@ class MigrationChecker
     /** @var array<string, true> */
     private array $usersToCheck = [];
 
+    private int $excludedSourceGrants = 0;
+
+    private int $excludedTargetGrants = 0;
+
     public function __construct(
         readonly Snowflake\Connection $sourceConnection,
         readonly Snowflake\Connection $destinationConnection,
@@ -85,6 +89,8 @@ class MigrationChecker
         $this->comparison = new StructureComparison($this->logger);
         $this->checkedRoles = [];
         $this->usersToCheck = [];
+        $this->excludedSourceGrants = 0;
+        $this->excludedTargetGrants = 0;
 
         $this->useMigrationRoles();
         $this->sourceRoles = $this->fetchRowsByName($this->sourceConnection, 'SHOW ROLES');
@@ -97,7 +103,9 @@ class MigrationChecker
             $this->usersToCheck[$databaseRole] = true;
 
             $this->checkRoleWithChildRoles($databaseRole);
-            $this->checkDatabaseObjects($database, $databaseRole);
+            if ($this->existsOnTarget($database)) {
+                $this->checkDatabaseObjects($database, $databaseRole);
+            }
         }
 
         $this->useMigrationRoles();
@@ -303,10 +311,20 @@ class MigrationChecker
             self::GRANT_TO_ROLE_FIELDS,
         );
 
+        $sourceGrantsOfRole = $this->withoutGrantsToUser(
+            $this->fetchForRole($this->sourceConnection, $this->sourceRoles, 'SHOW GRANTS OF ROLE', $role),
+            $this->config->getSourceSnowflakeUser(),
+            $this->excludedSourceGrants,
+        );
+        $targetGrantsOfRole = $this->withoutGrantsToUser(
+            $this->fetchForRole($this->destinationConnection, $this->targetRoles, 'SHOW GRANTS OF ROLE', $role),
+            $this->config->getTargetSnowflakeUser(),
+            $this->excludedTargetGrants,
+        );
         $this->comparison->compareItems(
             StructureComparison::GROUP_GRANTS_OF_ROLES,
-            $this->fetchForRole($this->sourceConnection, $this->sourceRoles, 'SHOW GRANTS OF ROLE', $role),
-            $this->fetchForRole($this->destinationConnection, $this->targetRoles, 'SHOW GRANTS OF ROLE', $role),
+            $sourceGrantsOfRole,
+            $targetGrantsOfRole,
             fn(array $grant) => sprintf(
                 '%s TO %s %s BY %s',
                 $grant['role'],
@@ -328,6 +346,42 @@ class MigrationChecker
                 $this->checkRoleWithChildRoles((string) $grant['name']);
             }
         }
+    }
+
+    /**
+     * The migration grants every role it creates to its own user (target) and the database role to its own user
+     * to copy views (source). These grants exist on one account only, so they are not compared.
+     *
+     * @param array<int, Row> $grantsOfRole
+     * @return array<int, Row>
+     */
+    private function withoutGrantsToUser(array $grantsOfRole, string $user, int &$excludedCount): array
+    {
+        $filtered = array_values(array_filter(
+            $grantsOfRole,
+            fn(array $grant) => !($grant['granted_to'] === 'USER' && $grant['grantee_name'] === $user),
+        ));
+        $excludedCount += count($grantsOfRole) - count($filtered);
+        return $filtered;
+    }
+
+    private function existsOnTarget(string $database): bool
+    {
+        /** @var array<int, Row> $databases */
+        $databases = $this->destinationConnection->fetchAll(sprintf(
+            'SHOW DATABASES LIKE %s',
+            QueryBuilder::quote($database),
+        ));
+        // LIKE ignores case and treats "_" as a wildcard.
+        $databases = array_values(array_filter($databases, fn(array $row) => $row['name'] === $database));
+        $this->comparison->compareItems(
+            StructureComparison::GROUP_DATABASES,
+            [['name' => $database]],
+            $databases,
+            fn(array $row) => (string) $row['name'],
+            ['name'],
+        );
+        return $databases !== [];
     }
 
     private function checkDatabaseObjects(string $database, string $databaseRole): void
@@ -435,6 +489,17 @@ class MigrationChecker
 
     private function reportCheckResult(): void
     {
+        $this->logger->info(sprintf(
+            'Excluded %d grants of roles to the migration user "%s" on the source account.',
+            $this->excludedSourceGrants,
+            $this->config->getSourceSnowflakeUser(),
+        ));
+        $this->logger->info(sprintf(
+            'Excluded %d grants of roles to the migration user "%s" on the target account.',
+            $this->excludedTargetGrants,
+            $this->config->getTargetSnowflakeUser(),
+        ));
+
         $differences = $this->comparison->getDifferences();
         if (!$differences) {
             $this->logger->info(sprintf(
