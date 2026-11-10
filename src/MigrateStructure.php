@@ -164,17 +164,7 @@ class MigrateStructure
                 foreach ($tables as $table) {
                     $tableName = $table['name'];
 
-                    $tableGrants = array_filter(
-                        $projectRoles->getTableGrantsFromAllRoles(),
-                        function (GrantToRole $v) use ($database, $schemaName, $tableName) {
-                            $validSchema = Helper::generateFormattedQuoteCombinations(
-                                $database,
-                                $schemaName,
-                                $tableName
-                            );
-                            return in_array($v->getName(), $validSchema);
-                        }
-                    );
+                    $tableGrants = $projectRoles->getTableGrants($database, $schemaName, $tableName);
                     $ownershipOnTable = array_filter(
                         $tableGrants,
                         fn(GrantToRole $v) => $v->getPrivilege() === 'OWNERSHIP'
