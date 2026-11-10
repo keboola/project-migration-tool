@@ -39,10 +39,16 @@ class Connection extends AdapterConnection
 
     public function query(string $sql, array $bind = []): void
     {
-        if ($this->getCurrentRole() === 'ACCOUNTADMIN' && str_starts_with($sql, 'DROP')) {
+        $this->assertQueryIsAllowed($sql);
+        parent::query($sql, $bind);
+    }
+
+    public function assertQueryIsAllowed(string $sql): void
+    {
+        // The role is read from the server and not cached, because raw "USE ROLE" statements can change it.
+        if (preg_match('/^\s*DROP/i', $sql) === 1 && $this->getCurrentRole() === 'ACCOUNTADMIN') {
             throw new UserException('Run DROP query on ACCOUNTADMIN role is not allowed.');
         }
-        parent::query($sql, $bind);
     }
 
     public function useRole(string $roleName, bool $forceUse = false): void
