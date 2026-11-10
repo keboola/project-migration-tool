@@ -4,14 +4,56 @@ declare(strict_types=1);
 
 namespace ProjectMigrationTool\ValueObject;
 
+use ProjectMigrationTool\Snowflake\Helper;
+
 class ProjectRoles
 {
     /** @var array<string, Role> $roles */
     private array $roles = [];
 
+    /**
+     * Grant name => (position in getTableGrantsFromAllRoles() => grant)
+     *
+     * @var array<string, array<int, GrantToRole>>|null
+     */
+    private ?array $tableGrantsByName = null;
+
     public function addRole(Role $role): void
     {
         $this->roles[$role->getName()] = $role;
+        $this->tableGrantsByName = null;
+    }
+
+    /**
+     * Returns the same grants, in the same order, as filtering getTableGrantsFromAllRoles()
+     * by Helper::generateFormattedQuoteCombinations($database, $schema, $table).
+     *
+     * @return list<GrantToRole>
+     */
+    public function getTableGrants(string $database, string $schema, string $table): array
+    {
+        $index = $this->getTableGrantsIndex();
+        $grants = [];
+        $names = array_unique(Helper::generateFormattedQuoteCombinations($database, $schema, $table));
+        foreach ($names as $name) {
+            $grants += $index[$name] ?? [];
+        }
+        ksort($grants);
+        return array_values($grants);
+    }
+
+    /**
+     * @return array<string, array<int, GrantToRole>>
+     */
+    private function getTableGrantsIndex(): array
+    {
+        if ($this->tableGrantsByName === null) {
+            $this->tableGrantsByName = [];
+            foreach ($this->getTableGrantsFromAllRoles() as $position => $grant) {
+                $this->tableGrantsByName[$grant->getName()][$position] = $grant;
+            }
+        }
+        return $this->tableGrantsByName;
     }
 
     /**
