@@ -11,8 +11,10 @@ use ProjectMigrationTool\Snowflake\Helper;
 use ProjectMigrationTool\Snowflake\ShowCommandPaginator;
 use ProjectMigrationTool\ValueObject\GrantToRole;
 use ProjectMigrationTool\ValueObject\Role;
+use ProjectMigrationTool\ValueObject\RoleGrants;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Process\Process;
+use Throwable;
 
 /**
  * @phpstan-import-type Row from StructureComparison
@@ -34,16 +36,17 @@ class MigrationChecker
         'name',
         'login_name',
         'display_name',
-        'first_name',
-        'last_name',
-        'email',
         'default_warehouse',
         'default_namespace',
         'default_role',
         'owner',
     ];
 
-    private const ROLE_FIELDS = ['name', 'comment', 'owner'];
+    private const ROLE_FIELDS = ['name', 'owner'];
+
+    private const SOURCE = 'source';
+
+    private const TARGET = 'target';
 
     private const GRANT_OF_ROLE_FIELDS = ['role', 'granted_to', 'grantee_name', 'granted_by'];
 
@@ -71,9 +74,14 @@ class MigrationChecker
     /** @var array<string, true> */
     private array $usersToCheck = [];
 
-    private int $excludedSourceGrants = 0;
+    /** @var array<string, int> */
+    private array $excludedMigrationUserGrants = [];
 
-    private int $excludedTargetGrants = 0;
+    /** @var array<string, int> */
+    private array $excludedTemporaryDatabaseGrants = [];
+
+    /** @var string[] */
+    private array $temporaryDatabases = [];
 
     public function __construct(
         readonly Snowflake\Connection $sourceConnection,
@@ -89,8 +97,13 @@ class MigrationChecker
         $this->comparison = new StructureComparison($this->logger);
         $this->checkedRoles = [];
         $this->usersToCheck = [];
-        $this->excludedSourceGrants = 0;
-        $this->excludedTargetGrants = 0;
+        $this->excludedMigrationUserGrants = [self::SOURCE => 0, self::TARGET => 0];
+        $this->excludedTemporaryDatabaseGrants = [self::SOURCE => 0, self::TARGET => 0];
+        $this->temporaryDatabases = [];
+        foreach ($this->databases as $database) {
+            $this->temporaryDatabases[] = $database . '_SHARE';
+            $this->temporaryDatabases[] = $database . '_OLD';
+        }
 
         $this->useMigrationRoles();
         $this->sourceRoles = $this->fetchRowsByName($this->sourceConnection, 'SHOW ROLES');
@@ -285,17 +298,18 @@ class MigrationChecker
         }
         $this->checkedRoles[$role] = true;
 
-        $sourceGrants = $this->fetchForRole($this->sourceConnection, $this->sourceRoles, 'SHOW GRANTS TO ROLE', $role);
-        $targetGrants = $this->fetchForRole(
-            $this->destinationConnection,
-            $this->targetRoles,
-            'SHOW GRANTS TO ROLE',
-            $role,
-        );
+        $sourceGrants = $this->fetchGrantsToRole($this->sourceConnection, $this->sourceRoles, $role);
+        $targetGrants = $this->fetchGrantsToRole($this->destinationConnection, $this->targetRoles, $role);
         $this->comparison->compareItems(
             StructureComparison::GROUP_GRANTS_TO_ROLES,
-            array_map(fn(array $grant) => $this->withoutAccountName($grant), $sourceGrants),
-            array_map(fn(array $grant) => $this->withoutAccountName($grant), $targetGrants),
+            array_map(
+                fn(array $grant) => $this->withoutAccountName($this->asMigratedGrant($grant)),
+                $this->withoutTemporaryDatabaseGrants($sourceGrants, self::SOURCE),
+            ),
+            array_map(
+                fn(array $grant) => $this->withoutAccountName($grant),
+                $this->withoutTemporaryDatabaseGrants($targetGrants, self::TARGET),
+            ),
             fn(array $grant) => implode(' ', array_filter(
                 [
                     $grant['privilege'],
@@ -314,16 +328,16 @@ class MigrationChecker
         $sourceGrantsOfRole = $this->withoutGrantsToUser(
             $this->fetchForRole($this->sourceConnection, $this->sourceRoles, 'SHOW GRANTS OF ROLE', $role),
             $this->config->getSourceSnowflakeUser(),
-            $this->excludedSourceGrants,
+            self::SOURCE,
         );
         $targetGrantsOfRole = $this->withoutGrantsToUser(
             $this->fetchForRole($this->destinationConnection, $this->targetRoles, 'SHOW GRANTS OF ROLE', $role),
             $this->config->getTargetSnowflakeUser(),
-            $this->excludedTargetGrants,
+            self::TARGET,
         );
         $this->comparison->compareItems(
             StructureComparison::GROUP_GRANTS_OF_ROLES,
-            $sourceGrantsOfRole,
+            array_map(fn(array $grant) => $this->withMigratedGrantedBy($grant), $sourceGrantsOfRole),
             $targetGrantsOfRole,
             fn(array $grant) => sprintf(
                 '%s TO %s %s BY %s',
@@ -355,14 +369,84 @@ class MigrationChecker
      * @param array<int, Row> $grantsOfRole
      * @return array<int, Row>
      */
-    private function withoutGrantsToUser(array $grantsOfRole, string $user, int &$excludedCount): array
+    private function withoutGrantsToUser(array $grantsOfRole, string $user, string $account): array
     {
         $filtered = array_values(array_filter(
             $grantsOfRole,
             fn(array $grant) => !($grant['granted_to'] === 'USER' && $grant['grantee_name'] === $user),
         ));
-        $excludedCount += count($grantsOfRole) - count($filtered);
+        $this->excludedMigrationUserGrants[$account] += count($grantsOfRole) - count($filtered);
         return $filtered;
+    }
+
+    /**
+     * The migration reads the "<DB>_SHARE" database and keeps the previous target database as "<DB>_OLD".
+     * Grants on them exist until the cleanup, so they are not compared.
+     *
+     * @param array<int, Row> $grants
+     * @return array<int, Row>
+     */
+    private function withoutTemporaryDatabaseGrants(array $grants, string $account): array
+    {
+        $filtered = array_values(array_filter(
+            $grants,
+            fn(array $grant) => !in_array($this->getGrantDatabaseName($grant), $this->temporaryDatabases, true),
+        ));
+        $this->excludedTemporaryDatabaseGrants[$account] += count($grants) - count($filtered);
+        return $filtered;
+    }
+
+    /**
+     * @param Row $grant
+     */
+    private function getGrantDatabaseName(array $grant): ?string
+    {
+        $name = (string) $grant['name'];
+        if (preg_match('/^"([^"]*)"(.*)$/', $name, $matches)) {
+            [, $database, $rest] = $matches;
+        } else {
+            $parts = explode('.', $name, 2);
+            $database = $parts[0];
+            $rest = isset($parts[1]) ? '.' . $parts[1] : '';
+        }
+
+        if ($grant['granted_on'] === 'DATABASE') {
+            return $rest === '' ? $database : null;
+        }
+        return str_starts_with($rest, '.') ? $database : null;
+    }
+
+    /**
+     * The target value the migration creates from a source grant.
+     *
+     * @param Row $grant
+     * @return Row
+     */
+    private function asMigratedGrant(array $grant): array
+    {
+        if ($grant['granted_on'] === 'WAREHOUSE') {
+            $grant['name'] = RoleGrants::mapWarehouseName(
+                (string) $grant['name'],
+                $this->config->getSourceSnowflakeWarehouse(),
+                $this->config->getTargetSnowflakeWarehouse(),
+            );
+        }
+        return $this->withMigratedGrantedBy($grant);
+    }
+
+    /**
+     * The migration grants as the "granted_by" role, but Connection::useRole() switches to the configured role
+     * instead of ACCOUNTADMIN.
+     *
+     * @param Row $grant
+     * @return Row
+     */
+    private function withMigratedGrantedBy(array $grant): array
+    {
+        if ($grant['granted_by'] === 'ACCOUNTADMIN') {
+            $grant['granted_by'] = $this->config->getTargetSnowflakeRole();
+        }
+        return $grant;
     }
 
     private function existsOnTarget(string $database): bool
@@ -384,13 +468,89 @@ class MigrationChecker
         return $databases !== [];
     }
 
+    /**
+     * SHOW lists only the objects the current role can see, so both accounts are listed with the database role.
+     */
     private function checkDatabaseObjects(string $database, string $databaseRole): void
     {
-        // The data migration lists the target tables with this role too.
-        if (isset($this->targetRoles[$databaseRole])) {
-            $this->destinationConnection->useRole($databaseRole);
+        if (!isset($this->sourceRoles[$databaseRole], $this->targetRoles[$databaseRole])) {
+            $this->logger->info(sprintf(
+                'Schemas, tables and views of database "%s" are not checked, '
+                . 'because the role "%s" does not exist on both accounts.',
+                $database,
+                $databaseRole,
+            ));
+            return;
         }
 
+        /** @var array<int, array{Snowflake\Connection, string}> $grantedRoles */
+        $grantedRoles = [];
+        try {
+            foreach ([
+                self::SOURCE => [$this->sourceConnection, $this->config->getSourceSnowflakeUser()],
+                self::TARGET => [$this->destinationConnection, $this->config->getTargetSnowflakeUser()],
+            ] as $account => [$connection, $user]) {
+                if ($this->grantRoleToUserIfMissing($connection, $account, $user, $databaseRole)) {
+                    $grantedRoles[] = [$connection, $user];
+                }
+                $connection->useRole($databaseRole);
+            }
+            $this->compareDatabaseObjects($database);
+        } finally {
+            $this->useMigrationRoles();
+            foreach ($grantedRoles as [$connection, $user]) {
+                $connection->query(sprintf(
+                    'REVOKE ROLE %s FROM USER %s',
+                    Helper::quoteIdentifier($databaseRole),
+                    Helper::quoteIdentifier($user),
+                ));
+            }
+        }
+    }
+
+    /**
+     * After "runCleanup" the target user has only the configured role, see Cleanup::postMigration().
+     */
+    private function grantRoleToUserIfMissing(
+        Snowflake\Connection $connection,
+        string $account,
+        string $user,
+        string $role,
+    ): bool {
+        $userRoles = array_column(
+            $connection->fetchAll(sprintf('SHOW GRANTS TO USER %s', Helper::quoteIdentifier($user))),
+            'role',
+        );
+        if (in_array($role, $userRoles, true)) {
+            return false;
+        }
+
+        try {
+            $connection->query(sprintf(
+                'GRANT ROLE %s TO USER %s',
+                Helper::quoteIdentifier($role),
+                Helper::quoteIdentifier($user),
+            ));
+        } catch (Throwable $e) {
+            throw new UserException(
+                sprintf(
+                    'The migration user "%s" does not have the role "%s" on the %s account '
+                    . "and the check cannot grant it: %s\nRun the check before \"runCleanup\", "
+                    . 'or grant the role to the user.',
+                    $user,
+                    $role,
+                    $account,
+                    $e->getMessage(),
+                ),
+                0,
+                $e,
+            );
+        }
+        return true;
+    }
+
+    private function compareDatabaseObjects(string $database): void
+    {
         $sourceSchemas = $this->fetchSchemas($this->sourceConnection, $database);
         $targetSchemas = $this->fetchSchemas($this->destinationConnection, $database);
         $this->comparison->compareItems(
@@ -444,6 +604,21 @@ class MigrationChecker
     }
 
     /**
+     * The migration skips Snowflake internal USER$ grants, see Helper::filterUserDollarGrants().
+     *
+     * @param array<string, Row> $existingRoles
+     * @return array<int, Row>
+     */
+    private function fetchGrantsToRole(Snowflake\Connection $connection, array $existingRoles, string $role): array
+    {
+        /** @var array<int, Row> $grants */
+        $grants = array_values(Helper::filterUserDollarGrants(
+            $this->fetchForRole($connection, $existingRoles, 'SHOW GRANTS TO ROLE', $role),
+        ));
+        return $grants;
+    }
+
+    /**
      * @param array<string, Row> $existingRoles
      * @return array<int, Row>
      */
@@ -489,16 +664,22 @@ class MigrationChecker
 
     private function reportCheckResult(): void
     {
-        $this->logger->info(sprintf(
-            'Excluded %d grants of roles to the migration user "%s" on the source account.',
-            $this->excludedSourceGrants,
-            $this->config->getSourceSnowflakeUser(),
-        ));
-        $this->logger->info(sprintf(
-            'Excluded %d grants of roles to the migration user "%s" on the target account.',
-            $this->excludedTargetGrants,
-            $this->config->getTargetSnowflakeUser(),
-        ));
+        foreach ([
+            self::SOURCE => $this->config->getSourceSnowflakeUser(),
+            self::TARGET => $this->config->getTargetSnowflakeUser(),
+        ] as $account => $user) {
+            $this->logger->info(sprintf(
+                'Excluded %d grants of roles to the migration user "%s" on the %s account.',
+                $this->excludedMigrationUserGrants[$account],
+                $user,
+                $account,
+            ));
+            $this->logger->info(sprintf(
+                'Excluded %d grants on the share and old databases on the %s account.',
+                $this->excludedTemporaryDatabaseGrants[$account],
+                $account,
+            ));
+        }
 
         $differences = $this->comparison->getDifferences();
         if (!$differences) {

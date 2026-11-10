@@ -13,18 +13,28 @@ use ProjectMigrationTool\Configuration\ConfigDefinition;
 use ProjectMigrationTool\MigrationChecker;
 use ProjectMigrationTool\Snowflake\Connection;
 use ProjectMigrationTool\Tests\Snowflake\TestLogger;
+use RuntimeException;
 
 class MigrationCheckerTest extends TestCase
 {
     private TestLogger $logger;
 
     /** @var string[] */
+    private array $sourceUsedRoles = [];
+
+    /** @var string[] */
     private array $targetUsedRoles = [];
+
+    /** @var array<int, array{sql: string, role: string, error: ?string}> */
+    private array $expectedTargetQueries = [];
+
+    private string $sourceWarehouse = 'WH';
+
+    private string $targetWarehouse = 'WH';
 
     protected function setUp(): void
     {
         $this->logger = new TestLogger();
-        $this->targetUsedRoles = [];
     }
 
     public function testNoDifferencesPasses(): void
@@ -39,7 +49,6 @@ class MigrationCheckerTest extends TestCase
             . 'Grants of roles: 2, Roles: 2, Grants to roles: 5.',
         ));
         self::assertSame([], $this->getWarnings());
-        self::assertContains('KEBOOLA_1', $this->targetUsedRoles);
     }
 
     public function testAccountGrantWithDifferentAccountNameIsNotReported(): void
@@ -125,10 +134,307 @@ class MigrationCheckerTest extends TestCase
         ];
         yield 'value moved between two fields' => [
             function (FakeSnowflakeAccount $target): void {
-                $target->users[0] = FakeSnowflakeAccount::user('KEBOOLA_1', 'KEBOOLA_1', 'Doe', 'John');
+                $target->users[0]['login_name'] = 'KEBOOLA_1 User';
+                $target->users[0]['display_name'] = 'KEBOOLA_1';
             },
-            'Users "KEBOOLA_1": first_name: John -> Doe, last_name: Doe -> John',
+            'Users "KEBOOLA_1": login_name: KEBOOLA_1 -> KEBOOLA_1 User, display_name: KEBOOLA_1 User -> KEBOOLA_1',
         ];
+        yield 'user default warehouse is not renamed by the migration' => [
+            function (FakeSnowflakeAccount $target): void {
+                $target->users[0]['default_warehouse'] = 'OTHER_WH';
+            },
+            'Users "KEBOOLA_1": default_warehouse: WH -> OTHER_WH',
+        ];
+    }
+
+    /**
+     * @dataProvider differenceCreatedByMigrationProvider
+     */
+    public function testDifferenceCreatedByMigrationIsNotReported(
+        Closure $changeAccounts,
+        string $expectedInfo,
+    ): void {
+        $source = FakeSnowflakeAccount::keboolaProject('SOURCE_ACCOUNT');
+        $target = FakeSnowflakeAccount::keboolaProject('TARGET_ACCOUNT');
+        $changeAccounts($source, $target, $this);
+
+        $this->runCheck($source, $target);
+
+        self::assertSame([], $this->getWarnings());
+        self::assertTrue($this->logger->hasInfoThatContains('Post-migration check passed.'));
+        self::assertTrue($this->logger->hasInfoThatContains($expectedInfo), $expectedInfo);
+    }
+
+    public static function differenceCreatedByMigrationProvider(): Generator
+    {
+        yield 'USER$ grants on both accounts' => [
+            function (FakeSnowflakeAccount $source, FakeSnowflakeAccount $target): void {
+                $source->grantsToRole['KEBOOLA_1_RO'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'USER',
+                    'USER$KEBOOLA_WORKSPACE_1',
+                    'KEBOOLA_1_RO',
+                );
+                $target->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'USER',
+                    'USER$KEBOOLA_WORKSPACE_2',
+                    'KEBOOLA_1',
+                );
+            },
+            'Post-migration check passed.',
+        ];
+        yield 'warehouse grant renamed to the target warehouse' => [
+            function (FakeSnowflakeAccount $source, FakeSnowflakeAccount $target, self $test): void {
+                $test->sourceWarehouse = 'SRC_WH';
+                $test->targetWarehouse = 'TGT_WH';
+                $source->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'SRC_WH_SMALL',
+                    'KEBOOLA_1',
+                );
+                $target->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'TGT_WH_SMALL',
+                    'KEBOOLA_1',
+                );
+            },
+            'Grants to roles: 6.',
+        ];
+        yield 'user fields the migration does not copy' => [
+            function (FakeSnowflakeAccount $source, FakeSnowflakeAccount $target): void {
+                $target->users[0]['first_name'] = '';
+                $target->users[0]['last_name'] = '';
+                $target->users[0]['email'] = 'other@example.com';
+                $target->roles[0]['comment'] = 'other comment';
+            },
+            'Post-migration check passed.',
+        ];
+        yield 'grants on the share and old databases' => [
+            function (FakeSnowflakeAccount $source, FakeSnowflakeAccount $target): void {
+                $target->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'IMPORTED PRIVILEGES',
+                    'DATABASE',
+                    'DB1_SHARE',
+                    'KEBOOLA_1',
+                );
+                $target->grantsToRole['KEBOOLA_1_RO'][] = FakeSnowflakeAccount::grantToRole(
+                    'SELECT',
+                    'TABLE',
+                    'DB1_OLD.S1.T1',
+                    'KEBOOLA_1_RO',
+                );
+                $source->grantsToRole['KEBOOLA_1_RO'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'SCHEMA',
+                    '"DB1_SHARE".S1',
+                    'KEBOOLA_1_RO',
+                );
+            },
+            'Excluded 2 grants on the share and old databases on the target account.',
+        ];
+        yield 'granted by ACCOUNTADMIN on the source' => [
+            function (FakeSnowflakeAccount $source, FakeSnowflakeAccount $target): void {
+                $source->grantsToRole['KEBOOLA_1_RO'] = [
+                    FakeSnowflakeAccount::grantToRole(
+                        'SELECT',
+                        'TABLE',
+                        'DB1.S1.T1',
+                        'KEBOOLA_1_RO',
+                        'false',
+                        'ACCOUNTADMIN',
+                    ),
+                ];
+                $target->grantsToRole['KEBOOLA_1_RO'] = [
+                    FakeSnowflakeAccount::grantToRole(
+                        'SELECT',
+                        'TABLE',
+                        'DB1.S1.T1',
+                        'KEBOOLA_1_RO',
+                        'false',
+                        'TARGET_MAIN_MIGRATE',
+                    ),
+                ];
+                $source->grantsOfRole['KEBOOLA_1'] = [
+                    FakeSnowflakeAccount::grantOfRole('KEBOOLA_1', 'USER', 'KEBOOLA_1', 'ACCOUNTADMIN'),
+                ];
+                $target->grantsOfRole['KEBOOLA_1'] = [
+                    FakeSnowflakeAccount::grantOfRole('KEBOOLA_1', 'USER', 'KEBOOLA_1', 'TARGET_MAIN_MIGRATE'),
+                ];
+            },
+            'Post-migration check passed.',
+        ];
+    }
+
+    /**
+     * @dataProvider differenceNearMigrationCaseProvider
+     */
+    public function testDifferenceNearMigrationCaseIsReported(
+        Closure $changeAccounts,
+        string $expectedDifference,
+    ): void {
+        $source = FakeSnowflakeAccount::keboolaProject('SOURCE_ACCOUNT');
+        $target = FakeSnowflakeAccount::keboolaProject('TARGET_ACCOUNT');
+        $changeAccounts($source, $target, $this);
+
+        try {
+            $this->runCheck($source, $target);
+            self::fail('UserException was expected.');
+        } catch (UserException $e) {
+            self::assertStringContainsString('- ' . $expectedDifference, $e->getMessage());
+        }
+        self::assertSame(['Post-migration check difference: ' . $expectedDifference], $this->getWarnings());
+    }
+
+    public static function differenceNearMigrationCaseProvider(): Generator
+    {
+        yield 'grant name with USER$ not at the start' => [
+            function (FakeSnowflakeAccount $source): void {
+                $source->grantsToRole['KEBOOLA_1_RO'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'USER',
+                    'KEBOOLA_USER$1',
+                    'KEBOOLA_1_RO',
+                );
+            },
+            'Grants to roles "USAGE ON USER KEBOOLA_USER$1 TO ROLE KEBOOLA_1_RO": missing in target account',
+        ];
+        yield 'warehouse grant renamed to a different warehouse' => [
+            function (FakeSnowflakeAccount $source, FakeSnowflakeAccount $target, self $test): void {
+                $test->sourceWarehouse = 'SRC_WH';
+                $test->targetWarehouse = 'TGT_WH';
+                $source->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'SRC_WH_SMALL',
+                    'KEBOOLA_1',
+                );
+                $target->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'TGT_WH_SMALL',
+                    'KEBOOLA_1',
+                );
+                $target->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'SRC_WH_LARGE',
+                    'KEBOOLA_1',
+                );
+            },
+            'Grants to roles "USAGE ON WAREHOUSE SRC_WH_LARGE TO ROLE KEBOOLA_1": missing in source account',
+        ];
+        yield 'grant on a database with a similar name' => [
+            function (FakeSnowflakeAccount $source, FakeSnowflakeAccount $target): void {
+                $target->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'DATABASE',
+                    'DB1_SHARED',
+                    'KEBOOLA_1',
+                );
+            },
+            'Grants to roles "USAGE ON DATABASE DB1_SHARED TO ROLE KEBOOLA_1": missing in source account',
+        ];
+        yield 'grant on the share database of a database that is not migrated' => [
+            function (FakeSnowflakeAccount $source, FakeSnowflakeAccount $target): void {
+                $target->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'IMPORTED PRIVILEGES',
+                    'DATABASE',
+                    'DB2_SHARE',
+                    'KEBOOLA_1',
+                );
+            },
+            'Grants to roles "IMPORTED PRIVILEGES ON DATABASE DB2_SHARE TO ROLE KEBOOLA_1": missing in source account',
+        ];
+        yield 'granted by ACCOUNTADMIN, target granted by another role' => [
+            function (FakeSnowflakeAccount $source, FakeSnowflakeAccount $target): void {
+                $source->grantsToRole['KEBOOLA_1_RO'] = [
+                    FakeSnowflakeAccount::grantToRole(
+                        'SELECT',
+                        'TABLE',
+                        'DB1.S1.T1',
+                        'KEBOOLA_1_RO',
+                        'false',
+                        'ACCOUNTADMIN',
+                    ),
+                ];
+            },
+            'Grants to roles "SELECT ON TABLE DB1.S1.T1 TO ROLE KEBOOLA_1_RO": '
+                . 'granted_by: TARGET_MAIN_MIGRATE -> KEBOOLA_STORAGE',
+        ];
+        yield 'granted by ACCOUNTADMIN on the target' => [
+            function (FakeSnowflakeAccount $source, FakeSnowflakeAccount $target): void {
+                $target->grantsToRole['KEBOOLA_1_RO'] = [
+                    FakeSnowflakeAccount::grantToRole(
+                        'SELECT',
+                        'TABLE',
+                        'DB1.S1.T1',
+                        'KEBOOLA_1_RO',
+                        'false',
+                        'ACCOUNTADMIN',
+                    ),
+                ];
+            },
+            'Grants to roles "SELECT ON TABLE DB1.S1.T1 TO ROLE KEBOOLA_1_RO": '
+                . 'granted_by: KEBOOLA_STORAGE -> ACCOUNTADMIN',
+        ];
+    }
+
+    public function testDatabaseObjectsAreListedWithTheProjectRoleOnBothAccounts(): void
+    {
+        $this->runCheck(
+            FakeSnowflakeAccount::keboolaProject('SOURCE_ACCOUNT'),
+            FakeSnowflakeAccount::keboolaProject('TARGET_ACCOUNT'),
+        );
+
+        self::assertContains('KEBOOLA_1', $this->sourceUsedRoles);
+        self::assertContains('KEBOOLA_1', $this->targetUsedRoles);
+        self::assertTrue($this->logger->hasInfoThatContains('Post-migration check passed.'));
+    }
+
+    public function testProjectRoleIsGrantedAndRevokedWhenUserDoesNotHaveIt(): void
+    {
+        $target = FakeSnowflakeAccount::keboolaProject('TARGET_ACCOUNT');
+        $target->rolesOfUser['TARGET_MIGRATE'] = ['TARGET_MAIN_MIGRATE'];
+        $this->expectedTargetQueries = [
+            [
+                'sql' => 'GRANT ROLE "KEBOOLA_1" TO USER "TARGET_MIGRATE"',
+                'role' => 'TARGET_MAIN_MIGRATE',
+                'error' => null,
+            ],
+            [
+                'sql' => 'REVOKE ROLE "KEBOOLA_1" FROM USER "TARGET_MIGRATE"',
+                'role' => 'TARGET_MAIN_MIGRATE',
+                'error' => null,
+            ],
+        ];
+
+        $this->runCheck(FakeSnowflakeAccount::keboolaProject('SOURCE_ACCOUNT'), $target);
+
+        self::assertContains('KEBOOLA_1', $this->targetUsedRoles);
+        self::assertTrue($this->logger->hasInfoThatContains('Post-migration check passed.'));
+    }
+
+    public function testFailingProjectRoleGrantEndsWithUserException(): void
+    {
+        $target = FakeSnowflakeAccount::keboolaProject('TARGET_ACCOUNT');
+        $target->rolesOfUser['TARGET_MIGRATE'] = ['TARGET_MAIN_MIGRATE'];
+        $this->expectedTargetQueries = [
+            [
+                'sql' => 'GRANT ROLE "KEBOOLA_1" TO USER "TARGET_MIGRATE"',
+                'role' => 'TARGET_MAIN_MIGRATE',
+                'error' => 'Insufficient privileges',
+            ],
+        ];
+
+        $this->expectException(UserException::class);
+        $this->expectExceptionMessage(
+            'The migration user "TARGET_MIGRATE" does not have the role "KEBOOLA_1" on the target account '
+            . 'and the check cannot grant it: Insufficient privileges',
+        );
+        $this->runCheck(FakeSnowflakeAccount::keboolaProject('SOURCE_ACCOUNT'), $target);
     }
 
     public function testGrantsOfRolesToMigrationUserAreExcluded(): void
@@ -326,7 +632,9 @@ class MigrationCheckerTest extends TestCase
             ->willReturn('KEBOOLA_1');
         $sourceConnection->expects(self::atLeastOnce())
             ->method('useRole')
-            ->with('SOURCE_MAIN_MIGRATE');
+            ->willReturnCallback(function (string $role): void {
+                $this->sourceUsedRoles[] = $role;
+            });
         $sourceConnection->expects(self::never())->method('query');
 
         $targetConnection = $this->createMock(Connection::class);
@@ -338,7 +646,18 @@ class MigrationCheckerTest extends TestCase
             ->willReturnCallback(function (string $role): void {
                 $this->targetUsedRoles[] = $role;
             });
-        $targetConnection->expects(self::never())->method('query');
+        $expectedTargetQueries = $this->expectedTargetQueries;
+        $targetConnection->expects(self::exactly(count($expectedTargetQueries)))
+            ->method('query')
+            ->willReturnCallback(function (string $sql) use (&$expectedTargetQueries): void {
+                $expected = array_shift($expectedTargetQueries);
+                self::assertNotNull($expected);
+                self::assertSame($expected['sql'], $sql);
+                self::assertSame($expected['role'], end($this->targetUsedRoles));
+                if ($expected['error'] !== null) {
+                    throw new RuntimeException($expected['error']);
+                }
+            });
 
         $config = new Config(
             [
@@ -347,8 +666,8 @@ class MigrationCheckerTest extends TestCase
                     'migrateDatabases' => ['DB1'],
                     'checkReportOnly' => $reportOnly,
                     'credentials' => [
-                        'source' => $this->credentials('SOURCE_MIGRATE', 'SOURCE_MAIN_MIGRATE'),
-                        'target' => $this->credentials('TARGET_MIGRATE', 'TARGET_MAIN_MIGRATE'),
+                        'source' => $this->credentials('SOURCE_MIGRATE', 'SOURCE_MAIN_MIGRATE', $this->sourceWarehouse),
+                        'target' => $this->credentials('TARGET_MIGRATE', 'TARGET_MAIN_MIGRATE', $this->targetWarehouse),
                     ],
                 ],
             ],
@@ -362,13 +681,13 @@ class MigrationCheckerTest extends TestCase
     /**
      * @return array<string, string>
      */
-    private function credentials(string $user, string $role): array
+    private function credentials(string $user, string $role, string $warehouse): array
     {
         return [
             'host' => 'host',
             'username' => $user,
             '#password' => 'password',
-            'warehouse' => 'WH',
+            'warehouse' => $warehouse,
             'role' => $role,
         ];
     }

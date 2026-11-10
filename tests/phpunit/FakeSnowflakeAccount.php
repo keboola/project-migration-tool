@@ -17,6 +17,16 @@ class FakeSnowflakeAccount
     /** @var string[] */
     public array $databases = ['DB1', 'DB1_SHARE'];
 
+    /**
+     * Roles granted to the migration users; by default the state before cleanup.
+     *
+     * @var array<string, string[]>
+     */
+    public array $rolesOfUser = [
+        'SOURCE_MIGRATE' => ['SOURCE_MAIN_MIGRATE', 'KEBOOLA_1'],
+        'TARGET_MIGRATE' => ['TARGET_MAIN_MIGRATE', 'KEBOOLA_STORAGE', 'KEBOOLA_1', 'KEBOOLA_1_RO'],
+    ];
+
     /** @var array<int, array<string, string>> */
     public array $users = [];
 
@@ -92,7 +102,7 @@ class FakeSnowflakeAccount
         return [
             'name' => $name,
             'login_name' => $name,
-            'display_name' => $name,
+            'display_name' => $name . ' User',
             'first_name' => $firstName,
             'last_name' => $lastName,
             'email' => '',
@@ -129,8 +139,12 @@ class FakeSnowflakeAccount
     /**
      * @return array<string, string>
      */
-    public static function grantOfRole(string $role, string $grantedTo, string $granteeName): array
-    {
+    public static function grantOfRole(
+        string $role,
+        string $grantedTo,
+        string $granteeName,
+        string $grantedBy = 'KEBOOLA_STORAGE',
+    ): array {
         return [
             'created_on' => '2024-01-01',
             'role' => $role,
@@ -171,6 +185,17 @@ class FakeSnowflakeAccount
         }
         if (preg_match('/^SHOW GRANTS OF ROLE "(.+)"$/', $sql, $matches)) {
             return $this->grantsOfRole[$matches[1]] ?? throw new RuntimeException('Role does not exist: ' . $sql);
+        }
+        if (preg_match('/^SHOW GRANTS TO USER "(.+)"$/', $sql, $matches)) {
+            return array_map(
+                fn(string $role) => [
+                    'role' => $role,
+                    'granted_to' => 'USER',
+                    'grantee_name' => $matches[1],
+                    'granted_by' => '',
+                ],
+                $this->rolesOfUser[$matches[1]] ?? throw new RuntimeException('User does not exist: ' . $sql),
+            );
         }
         if (preg_match('/^SHOW DATABASES LIKE \'(.+)\'$/', $sql, $matches)) {
             $pattern = '/^' . str_replace(['_', '%'], ['.', '.*'], preg_quote($matches[1], '/')) . '$/i';
