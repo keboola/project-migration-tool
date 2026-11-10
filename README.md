@@ -120,6 +120,32 @@ If you already have a Keboola project on your Snowflake account, please also run
 GRANT ROLE KEBOOLA_STORAGE TO USER "MIGRATE";
 ```
 
+## Post-migration check
+
+The `runCheckMigratedData` action compares the source and the target account. It uses
+`SHOW` commands, so it shows the current state and can run right after the migration.
+You do not need to wait for `SNOWFLAKE.ACCOUNT_USAGE` to catch up, and no warehouse is used.
+
+For each database in `migrateDatabases` the check compares:
+
+- schemas (except `INFORMATION_SCHEMA` and `PUBLIC`)
+- tables: `name`, `schema_name`, `kind`, `rows`, `owner`
+- views: `name`, `schema_name`, `owner`
+- the database owner role and all roles it owns (also nested), discovered on both accounts:
+  roles (`name`, `comment`, `owner`), grants to these roles and grants of these roles
+- users owned by these roles: `name`, `login_name`, `display_name`, `first_name`, `last_name`,
+  `email`, `default_warehouse`, `default_namespace`, `default_role`, `owner`
+
+Account-level grants are compared without the account name, because it differs between accounts.
+The check does not compare the data in the tables, only the row counts.
+
+Each difference is logged as a warning. If there are any differences, the job fails and the
+error message lists a count per group and the first 50 differences. The full list is in the job log.
+
+Optional parameter:
+
+- `checkReportOnly` (default `false`) — log the differences but do not fail the job.
+
 ## Development
  
 Clone this repository and init the workspace with following command:
