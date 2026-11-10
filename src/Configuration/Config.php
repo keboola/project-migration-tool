@@ -60,6 +60,13 @@ class Config extends BaseConfig
         return $value;
     }
 
+    public function isCheckReportOnly(): bool
+    {
+        /** @var bool $value */
+        $value = $this->getValue(['parameters', 'checkReportOnly'], false);
+        return $value;
+    }
+
     public function getSynchronizeDryPremigrationCleanupRun(): bool
     {
         /** @var bool $value */

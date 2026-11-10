@@ -98,6 +98,7 @@ class ConfigDefinition extends BaseConfigDefinition
                 ->integerNode('replicationRefreshTimeout')->min(1)->defaultValue(3600)->end()
                 ->integerNode('replicationRefreshPollInterval')->min(1)->defaultValue(30)->end()
                 ->booleanNode('skipCheck')->defaultFalse()->end()
+                ->booleanNode('checkReportOnly')->defaultFalse()->end()
                 ->booleanNode('synchronize')->defaultFalse()->end()
                 ->booleanNode('dryPremigrationCleanupRun')->defaultTrue()->end()
             ->end()
