@@ -66,8 +66,15 @@ class MigrateStructure
             $sourceDatabase = current($sourceDatabases);
 
             $this->logger->info(sprintf('Migrate database "%s".', $database));
+            if ($this->isResumableRun() && $this->databaseExistsOnTarget($database)) {
+                $this->logger->info(sprintf(
+                    'Database "%s" already exists on the target account, it will be reused.',
+                    $database,
+                ));
+            }
             $this->destinationConnection->query(sprintf(
-                'CREATE DATABASE %s DATA_RETENTION_TIME_IN_DAYS=%s;',
+                'CREATE DATABASE %s%s DATA_RETENTION_TIME_IN_DAYS=%s;',
+                $this->ifNotExists(),
                 Helper::quoteIdentifier($database),
                 $sourceDatabase['retention_time']
             ));
@@ -134,8 +141,9 @@ class MigrateStructure
 
                 $this->destinationConnection->useRole(current($ownershipOnSchema)->getGrantedBy());
                 $this->destinationConnection->query(sprintf(
-                    'CREATE %s SCHEMA %s.%s %s DATA_RETENTION_TIME_IN_DAYS = %s;',
+                    'CREATE %s SCHEMA %s%s.%s %s DATA_RETENTION_TIME_IN_DAYS = %s;',
                     in_array('TRANSIENT', $schemaOptions) ? 'TRANSIENT' : '',
+                    $this->ifNotExists(),
                     Helper::quoteIdentifier($database),
                     Helper::quoteIdentifier($schemaName),
                     in_array('MANAGED ACCESS', $schemaOptions) ? 'WITH MANAGED ACCESS' : '',
@@ -602,7 +610,8 @@ SQL;
         );
 
         $this->destinationConnection->query(sprintf(
-            'CREATE USER %s %s',
+            'CREATE USER %s%s %s',
+            $this->ifNotExists(),
             $userGrant->getName(),
             implode(' ', $describeUser),
         ));
@@ -894,6 +903,35 @@ SQL;
             }
             $this->destinationConnection->assignGrantToRole($proceduresGrant);
         }
+    }
+
+    /**
+     * A synchronize run starts from a target that Cleanup::preMigration() has cleared, so it keeps
+     * failing on an object that still exists instead of reusing it.
+     */
+    private function isResumableRun(): bool
+    {
+        return !$this->config->isSynchronizeRun();
+    }
+
+    private function ifNotExists(): string
+    {
+        return $this->isResumableRun() ? 'IF NOT EXISTS ' : '';
+    }
+
+    private function databaseExistsOnTarget(string $database): bool
+    {
+        // LIKE is case-insensitive and "_" matches any character, so compare the names exactly.
+        $databases = $this->destinationConnection->fetchAll(sprintf(
+            'SHOW DATABASES LIKE %s',
+            QueryBuilder::quote($database),
+        ));
+        foreach ($databases as $row) {
+            if ($row['name'] === $database) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private function assert(bool $assert, string $message): bool
