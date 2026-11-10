@@ -18,10 +18,26 @@ class ProjectRoles
      */
     private ?array $tableGrantsByName = null;
 
+    /**
+     * Grant name => (position in getSchemaGrantsFromAllRoles() => grant)
+     *
+     * @var array<string, array<int, GrantToRole>>|null
+     */
+    private ?array $schemaGrantsByName = null;
+
+    /**
+     * Grant name => (position in getFutureTableGrantsFromAllRoles() => grant)
+     *
+     * @var array<string, array<int, FutureGrantToRole>>|null
+     */
+    private ?array $futureTableGrantsByName = null;
+
     public function addRole(Role $role): void
     {
         $this->roles[$role->getName()] = $role;
         $this->tableGrantsByName = null;
+        $this->schemaGrantsByName = null;
+        $this->futureTableGrantsByName = null;
     }
 
     /**
@@ -32,28 +48,62 @@ class ProjectRoles
      */
     public function getTableGrants(string $database, string $schema, string $table): array
     {
-        $index = $this->getTableGrantsIndex();
+        $this->tableGrantsByName ??= self::indexByName($this->getTableGrantsFromAllRoles());
+        return self::findByName($this->tableGrantsByName, $database, $schema, $table);
+    }
+
+    /**
+     * Returns the same grants, in the same order, as filtering getSchemaGrantsFromAllRoles()
+     * by Helper::generateFormattedQuoteCombinations($database, $schema).
+     *
+     * @return list<GrantToRole>
+     */
+    public function getSchemaGrants(string $database, string $schema): array
+    {
+        $this->schemaGrantsByName ??= self::indexByName($this->getSchemaGrantsFromAllRoles());
+        return self::findByName($this->schemaGrantsByName, $database, $schema);
+    }
+
+    /**
+     * Returns the same grants, in the same order, as filtering getFutureTableGrantsFromAllRoles()
+     * by Helper::generateFormattedQuoteCombinations($database, $schema).
+     *
+     * @return list<FutureGrantToRole>
+     */
+    public function getFutureTableGrants(string $database, string $schema): array
+    {
+        $this->futureTableGrantsByName ??= self::indexByName($this->getFutureTableGrantsFromAllRoles());
+        return self::findByName($this->futureTableGrantsByName, $database, $schema);
+    }
+
+    /**
+     * @template T of GrantToRole|FutureGrantToRole
+     * @param array<int, T> $grants
+     * @return array<string, array<int, T>>
+     */
+    private static function indexByName(array $grants): array
+    {
+        $index = [];
+        foreach ($grants as $position => $grant) {
+            $index[$grant->getName()][$position] = $grant;
+        }
+        return $index;
+    }
+
+    /**
+     * @template T of GrantToRole|FutureGrantToRole
+     * @param array<string, array<int, T>> $index
+     * @return list<T>
+     */
+    private static function findByName(array $index, string ...$nameParts): array
+    {
         $grants = [];
-        $names = array_unique(Helper::generateFormattedQuoteCombinations($database, $schema, $table));
+        $names = array_unique(Helper::generateFormattedQuoteCombinations(...$nameParts));
         foreach ($names as $name) {
             $grants += $index[$name] ?? [];
         }
         ksort($grants);
         return array_values($grants);
-    }
-
-    /**
-     * @return array<string, array<int, GrantToRole>>
-     */
-    private function getTableGrantsIndex(): array
-    {
-        if ($this->tableGrantsByName === null) {
-            $this->tableGrantsByName = [];
-            foreach ($this->getTableGrantsFromAllRoles() as $position => $grant) {
-                $this->tableGrantsByName[$grant->getName()][$position] = $grant;
-            }
-        }
-        return $this->tableGrantsByName;
     }
 
     /**
