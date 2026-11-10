@@ -141,7 +141,7 @@ class Component extends BaseComponent
         $mainRoleWithGrants = $metadataFetcher->getMainRoleWithGrants();
 
         $this->getLogger()->info('Checking data.');
-        $migrationChecker->postMigrationCheckStructure($mainRoleWithGrants);
+        $migrationChecker->postMigrationCheckStructure();
 //        $migrationChecker->postMigrationCheckData($mainRoleWithGrants);
     }
 
