@@ -134,7 +134,7 @@ class Helper
     public static function generateFormattedQuoteCombinations(string ...$inputArray): array
     {
         $ret = [];
-        for ($b = 0; $b < pow(count($inputArray), 2); $b++) {
+        for ($b = 0; $b < 2 ** count($inputArray); $b++) {
             $binNum = str_pad(decbin($b), count($inputArray), '0', STR_PAD_LEFT);
             if (strlen($binNum) === count($inputArray)) {
                 $variables = [];
