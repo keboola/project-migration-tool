@@ -134,14 +134,10 @@ class Component extends BaseComponent
     private function runCheckMigratedData(): void
     {
         $migrateFactory = new MigrateFactory($this->getLogger(), $this->getConfig());
-        $metadataFetcher = $migrateFactory->createMetadataFetcher();
         $migrationChecker = $migrateFactory->createMigrationChecker();
 
-        $this->getLogger()->info('Getting main role with grants');
-        $mainRoleWithGrants = $metadataFetcher->getMainRoleWithGrants();
-
         $this->getLogger()->info('Checking data.');
-        $migrationChecker->postMigrationCheckStructure($mainRoleWithGrants);
+        $migrationChecker->postMigrationCheckStructure();
 //        $migrationChecker->postMigrationCheckData($mainRoleWithGrants);
     }
 

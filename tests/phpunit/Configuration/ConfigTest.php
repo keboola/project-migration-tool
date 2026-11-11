@@ -41,4 +41,25 @@ class ConfigTest extends TestCase
         self::assertSame(120, $config->getReplicationRefreshTimeout());
         self::assertSame(5, $config->getReplicationRefreshPollInterval());
     }
+
+    public function testCheckReportOnlyDefaultsToFalse(): void
+    {
+        $config = $this->makeConfig([
+            'action' => Config::ACTION_CHECK,
+            'migrateDatabases' => ['DB1'],
+        ]);
+
+        self::assertFalse($config->isCheckReportOnly());
+    }
+
+    public function testCheckReportOnlyCanBeEnabled(): void
+    {
+        $config = $this->makeConfig([
+            'action' => Config::ACTION_CHECK,
+            'migrateDatabases' => ['DB1'],
+            'checkReportOnly' => true,
+        ]);
+
+        self::assertTrue($config->isCheckReportOnly());
+    }
 }
