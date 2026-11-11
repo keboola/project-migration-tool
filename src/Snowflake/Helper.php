@@ -116,25 +116,10 @@ class Helper
         return $randomString;
     }
 
-    /**
-     * @param GrantToRole[]|FutureGrantToRole[] $schemasGrants
-     * @return GrantToRole[]|FutureGrantToRole[]
-     */
-    public static function filterSchemaGrants(string $database, string $schemaName, array $schemasGrants): array
-    {
-        return array_filter(
-            $schemasGrants,
-            function (GrantToRole|FutureGrantToRole $v) use ($database, $schemaName) {
-                $validSchema = Helper::generateFormattedQuoteCombinations($database, $schemaName);
-                return in_array($v->getName(), $validSchema);
-            }
-        );
-    }
-
     public static function generateFormattedQuoteCombinations(string ...$inputArray): array
     {
         $ret = [];
-        for ($b = 0; $b < pow(count($inputArray), 2); $b++) {
+        for ($b = 0; $b < 2 ** count($inputArray); $b++) {
             $binNum = str_pad(decbin($b), count($inputArray), '0', STR_PAD_LEFT);
             if (strlen($binNum) === count($inputArray)) {
                 $variables = [];
