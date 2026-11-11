@@ -292,7 +292,9 @@ class MigrateStructure
             if (!$mainRoleExistsOnTargetUser) {
                 throw new UserException('Main role exists but is not assigned to migrate user.');
             }
-            return;
+            if (!$this->isResumableRun()) {
+                return;
+            }
         }
 
         $this->destinationConnection->createRole(

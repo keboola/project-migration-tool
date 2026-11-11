@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ProjectMigrationTool\Tests;
 
 use Generator;
+use Keboola\Component\UserException;
 use Keboola\SnowflakeDbAdapter\Exception\RuntimeException;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
@@ -149,6 +150,8 @@ class MigrateStructureTest extends TestCase
 
     private ?string $targetRole = null;
 
+    private bool $mainRoleGrantedToTargetUser = true;
+
     private TestLogger $logger;
 
     public function testSynchronizeRunSendsSameStatementsAsBefore(): void
@@ -273,6 +276,59 @@ class MigrateStructureTest extends TestCase
         self::assertContains("target fetch: SHOW USERS LIKE 'KEBOOLA_1_RO'", $this->log);
     }
 
+    public function testResumeWithExistingMainRoleSendsRemainingMainRoleStatements(): void
+    {
+        $this->existingOnTarget = ['ROLE "KEBOOLA_STORAGE"'];
+
+        $this->runStructureStep(synchronize: false);
+
+        foreach ([
+            'target: CREATE ROLE IF NOT EXISTS "KEBOOLA_STORAGE"',
+            'target: GRANT CREATE DATABASE ON ACCOUNT TO ROLE KEBOOLA_STORAGE;',
+            'target: GRANT CREATE ROLE ON ACCOUNT TO ROLE KEBOOLA_STORAGE WITH GRANT OPTION;',
+            'target: GRANT CREATE USER ON ACCOUNT TO ROLE KEBOOLA_STORAGE WITH GRANT OPTION;',
+            'target: GRANT USAGE ON WAREHOUSE KEBOOLA_PROD TO ROLE "KEBOOLA_STORAGE" WITH GRANT OPTION',
+            "target: CREATE USER IF NOT EXISTS KEBOOLA_STORAGE PASSWORD='***' DEFAULT_ROLE=KEBOOLA_STORAGE",
+            'target: GRANT ROLE KEBOOLA_STORAGE TO USER KEBOOLA_STORAGE;',
+            'target: GRANT ROLE KEBOOLA_STORAGE TO ROLE SYSADMIN;',
+        ] as $statement) {
+            self::assertContains($statement, $this->log);
+        }
+        self::assertSame(
+            array_values(array_diff(self::ALL_OBJECTS, ['ROLE "KEBOOLA_STORAGE"'])),
+            $this->createdOnTarget,
+        );
+    }
+
+    public function testMainRoleNotGrantedToTargetUserStillFails(): void
+    {
+        $this->existingOnTarget = ['ROLE "KEBOOLA_STORAGE"'];
+        $this->mainRoleGrantedToTargetUser = false;
+
+        $this->expectException(UserException::class);
+        $this->expectExceptionMessage('Main role exists but is not assigned to migrate user.');
+
+        $this->runStructureStep(synchronize: false);
+    }
+
+    public function testSynchronizeRunWithExistingMainRoleSkipsMainRoleStatements(): void
+    {
+        $this->existingOnTarget = ['ROLE "KEBOOLA_STORAGE"'];
+
+        $this->runStructureStep(synchronize: true);
+
+        self::assertSame(
+            [
+                "target fetch: SHOW ROLES LIKE 'KEBOOLA_STORAGE'",
+                'target fetch: SHOW GRANTS TO USER "MIGRATE_TARGET_USER"',
+                'source fetch: SHOW GRANTS TO ROLE "MIGRATE_SOURCE"',
+            ],
+            array_slice($this->log, 0, 3),
+        );
+        self::assertNotContains('WAREHOUSE "KEBOOLA_PROD"', $this->createdOnTarget);
+        self::assertNotContains('USER KEBOOLA_STORAGE', $this->createdOnTarget);
+    }
+
     public function testResumeAfterFailureCreatesOnlyMissingObjects(): void
     {
         $this->existingOnTarget = [
@@ -351,15 +407,15 @@ class MigrateStructureTest extends TestCase
     private function createSourceConnection(): Connection
     {
         $connection = $this->createConnectionMock();
-        $connection->expects(self::atLeastOnce())
+        $connection->expects(self::any())
             ->method('getCurrentRole')
             ->willReturn(self::SOURCE_ROLE);
-        $connection->expects(self::atLeastOnce())
+        $connection->expects(self::any())
             ->method('query')
             ->willReturnCallback(function (string $sql): void {
                 $this->log[] = 'source: ' . $sql;
             });
-        $connection->expects(self::atLeastOnce())
+        $connection->expects(self::any())
             ->method('fetchAll')
             ->willReturnCallback(function (string $sql): array {
                 $this->log[] = 'source fetch: ' . $sql;
@@ -372,7 +428,7 @@ class MigrateStructureTest extends TestCase
     {
         $connection = $this->createConnectionMock();
         $connection->expects(self::never())->method('getCurrentRole');
-        $connection->expects(self::atLeastOnce())
+        $connection->expects(self::any())
             ->method('query')
             ->willReturnCallback(function (string $sql): void {
                 $this->log[] = 'target: ' . $this->maskPassword($sql);
@@ -445,6 +501,7 @@ class MigrateStructureTest extends TestCase
                 ? [['name' => self::MAIN_ROLE]]
                 : [],
             'SHOW GRANTS TO USER "MIGRATE_TARGET_USER"' => in_array('ROLE "KEBOOLA_STORAGE"', $this->existingOnTarget)
+                && $this->mainRoleGrantedToTargetUser
                 ? [['role' => self::MAIN_ROLE]]
                 : [],
             "SHOW DATABASES LIKE 'KEBOOLA_1'" => array_values(array_map(
