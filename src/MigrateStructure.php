@@ -11,7 +11,6 @@ use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Snowflake\BuildQueryHelper;
 use ProjectMigrationTool\Snowflake\Connection;
 use ProjectMigrationTool\Snowflake\Helper;
-use ProjectMigrationTool\ValueObject\FutureGrantToRole;
 use ProjectMigrationTool\ValueObject\GrantToRole;
 use ProjectMigrationTool\ValueObject\GrantToUser;
 use ProjectMigrationTool\ValueObject\ProjectRoles;
@@ -110,18 +109,8 @@ class MigrateStructure
 
                 $this->logger->info(sprintf('Migrate schema "%s".', $schemaName));
 
-                /** @var GrantToRole[] $schemaGrants */
-                $schemaGrants = Helper::filterSchemaGrants(
-                    $database,
-                    $schemaName,
-                    $projectRoles->getSchemaGrantsFromAllRoles()
-                );
-                /** @var FutureGrantToRole[] $schemaFutureGrants */
-                $schemaFutureGrants = Helper::filterSchemaGrants(
-                    $database,
-                    $schemaName,
-                    $projectRoles->getFutureTableGrantsFromAllRoles()
-                );
+                $schemaGrants = $projectRoles->getSchemaGrants($database, $schemaName);
+                $schemaFutureGrants = $projectRoles->getFutureTableGrants($database, $schemaName);
                 $ownershipOnSchema = array_filter($schemaGrants, fn($v) => $v->getPrivilege() === 'OWNERSHIP');
                 if (!$this->assert(
                     count($ownershipOnSchema) === 1,
