@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace ProjectMigrationTool;
 
+use Keboola\Component\UserException;
+use Keboola\SnowflakeDbAdapter\Exception\CannotAccessObjectException;
 use Keboola\SnowflakeDbAdapter\Exception\RuntimeException;
 use Keboola\SnowflakeDbAdapter\QueryBuilder;
 use ProjectMigrationTool\Configuration\Config;
@@ -22,6 +24,12 @@ class MigrateData
         'PUBLIC',
     ];
 
+    public const SYNC_CLONE = 'clone';
+    public const SYNC_COPY = 'copy';
+    public const SYNC_SKIP = 'skip';
+
+    private const SKIPPED_TABLES_LOG_LIMIT = 50;
+
     public function __construct(
         private readonly Connection $sourceConnection,
         private readonly Connection $destinationConnection,
@@ -38,6 +46,8 @@ class MigrateData
      */
     public function migrate(Role $mainRole, array $roles): void
     {
+        /** @var list<string> $skippedTables */
+        $skippedTables = [];
         foreach ($this->databases as $database) {
             $this->logger->info(sprintf('Use database "%s".', $database));
             $this->sourceConnection->useRole($this->mainMigrationRoleSourceAccount);
@@ -72,32 +82,40 @@ class MigrateData
                     Helper::quoteIdentifier($database),
                     Helper::quoteIdentifier($schemaName)
                 ));
+                $tablesInOld = $this->config->isSynchronizeRun()
+                    ? $this->getTablesInOldSchema($mainRole->getName(), $oldDbName, $schemaName)
+                    : [];
 
                 foreach ($tablesInShare as $tableInShare) {
                     $tableName = $tableInShare['name'];
+                    $fullTableName = sprintf('%s.%s.%s', $database, $schemaName, $tableName);
                     $table = array_filter($tables, fn($v) => $v['name'] === $tableName);
                     if (count($table) === 0) {
                         continue;
                     }
-                    assert(
-                        count($table) === 1,
-                        sprintf('Table "%s" is not unique in database "%s"', $tableName, $database)
-                    );
-                    $table = current($table);
 
                     $tableGrants = $projectRoles->getTableGrants($database, $schemaName, $tableName);
                     $ownershipOnTable = array_filter(
                         $tableGrants,
                         fn(GrantToRole $v) => $v->getPrivilege() === 'OWNERSHIP'
                     );
-                    assert(count($ownershipOnTable) === 1);
-                    $ownershipOnTable = current($ownershipOnTable);
+
+                    $problem = $this->findTableProblem($fullTableName, count($table), $ownershipOnTable, $projectRoles);
+                    if ($problem !== null) {
+                        if (!$this->config->skipCheck()) {
+                            throw new UserException($problem);
+                        }
+                        $this->logger->warning(sprintf('Skipping table "%s": %s', $fullTableName, $problem));
+                        $skippedTables[] = $fullTableName;
+                        continue;
+                    }
+                    $table = current($table);
+                    $ownershipOnTable = array_values($ownershipOnTable)[0];
 
                     $warehouseGrants = $projectRoles
                         ->getRole($ownershipOnTable->getGrantedBy())
                         ->getAssignedGrants()
                         ->getWarehouseGrants();
-                    assert(count($warehouseGrants) > 0);
 
                     try {
                         $this->destinationConnection->useWarehouse($this->getWarehouseName($warehouseGrants));
@@ -112,9 +130,11 @@ class MigrateData
                         ));
                     }
 
-                    $migrated = false;
+                    $shareRows = self::toRowCount($tableInShare['rows'] ?? null);
+                    $targetRows = self::toRowCount($table['rows'] ?? null);
+
                     if ($this->config->isSynchronizeRun()) {
-                        $compareProductionAndShareDatabase = $this->compareTableMaxTimestamp(
+                        $sameTimestampAsTarget = $this->compareTableMaxTimestamp(
                             $ownershipOnTable->getGrantedBy(),
                             $this->mainMigrationRoleTargetAccount,
                             $database,
@@ -123,7 +143,8 @@ class MigrateData
                             $tableName
                         );
 
-                        $compareOldAndShareDatabase = $this->compareTableMaxTimestamp(
+                        $tableInOld = $tablesInOld[$tableName] ?? null;
+                        $sameTimestampAsOld = $tableInOld !== null && $this->compareTableMaxTimestamp(
                             $mainRole->getName(),
                             $this->mainMigrationRoleTargetAccount,
                             $oldDbName,
@@ -132,7 +153,21 @@ class MigrateData
                             $tableName
                         );
 
-                        if ($compareOldAndShareDatabase) {
+                        $decision = self::decideSynchronizeAction(
+                            $sameTimestampAsOld,
+                            self::toRowCount($tableInOld['rows'] ?? null),
+                            $sameTimestampAsTarget,
+                            $targetRows,
+                            $shareRows,
+                        );
+                        $this->logger->info(sprintf(
+                            'Table "%s": %s, %s.',
+                            $fullTableName,
+                            $decision['action'],
+                            $decision['reason'],
+                        ));
+
+                        if ($decision['action'] === self::SYNC_CLONE) {
                             $this->grantUsageToOldTable(
                                 $database,
                                 $schemaName,
@@ -165,8 +200,7 @@ class MigrateData
                             foreach ($tableGrants as $tableGrant) {
                                 $this->destinationConnection->assignGrantToRole($tableGrant);
                             }
-                            $migrated = true;
-                        } elseif (!$compareProductionAndShareDatabase) {
+                        } elseif ($decision['action'] === self::SYNC_COPY) {
                             $this->logger->info(sprintf('Migrate data for table "%s".', $tableName));
                             $this->destinationConnection->query(sprintf(
                                 'TRUNCATE TABLE %s.%s.%s;',
@@ -184,15 +218,14 @@ class MigrateData
                                 Helper::quoteIdentifier($schemaName),
                                 Helper::quoteIdentifier($tableName),
                             ));
-                            $migrated = true;
                         }
-                    }
 
-                    if ($migrated) {
+                        // The logged decision is final: a "skip" must not reach the INSERT below.
                         continue;
                     }
 
-                    if ($table['rows'] === '0' && $tableInShare !== '0') {
+                    // An unknown share row count still copies: an INSERT from an empty table changes nothing.
+                    if ($targetRows === 0 && $shareRows !== 0) {
                         $this->logger->info(sprintf('Migrate data for table "%s".', $tableName));
                         $this->destinationConnection->query(sprintf(
                             'INSERT INTO %s.%s.%s SELECT * FROM %s.%s.%s;',
@@ -207,6 +240,163 @@ class MigrateData
                 }
             }
         }
+
+        $this->logSkippedTables($skippedTables);
+    }
+
+    /**
+     * A row count of null means it is unknown. Then only the max timestamp is compared.
+     *
+     * @return array{action: self::SYNC_*, reason: string}
+     */
+    public static function decideSynchronizeAction(
+        bool $sameTimestampAsOld,
+        ?int $oldRows,
+        bool $sameTimestampAsTarget,
+        ?int $targetRows,
+        ?int $shareRows,
+    ): array {
+        if ($sameTimestampAsOld) {
+            if ($oldRows === null || $shareRows === null) {
+                return [
+                    'action' => self::SYNC_CLONE,
+                    'reason' => 'same max timestamp in OLD database and share, row count is unknown',
+                ];
+            }
+            if ($oldRows === $shareRows) {
+                return [
+                    'action' => self::SYNC_CLONE,
+                    'reason' => 'same max timestamp and row count in OLD database and share',
+                ];
+            }
+        }
+
+        if (!$sameTimestampAsTarget) {
+            return [
+                'action' => self::SYNC_COPY,
+                'reason' => 'max timestamp in target and share differs or cannot be read',
+            ];
+        }
+        if ($targetRows === null || $shareRows === null) {
+            return [
+                'action' => self::SYNC_SKIP,
+                'reason' => 'same max timestamp in target and share, row count is unknown',
+            ];
+        }
+        if ($targetRows !== $shareRows) {
+            return [
+                'action' => self::SYNC_COPY,
+                'reason' => sprintf(
+                    'same max timestamp but different row count in target (%d) and share (%d)',
+                    $targetRows,
+                    $shareRows,
+                ),
+            ];
+        }
+        return [
+            'action' => self::SYNC_SKIP,
+            'reason' => 'same max timestamp and row count in target and share',
+        ];
+    }
+
+    private static function toRowCount(mixed $rows): ?int
+    {
+        if (is_int($rows)) {
+            return $rows;
+        }
+        if (is_string($rows) && is_numeric($rows)) {
+            return (int) $rows;
+        }
+        return null;
+    }
+
+    /**
+     * @param array<GrantToRole> $ownershipGrants
+     */
+    private function findTableProblem(
+        string $fullTableName,
+        int $tableCount,
+        array $ownershipGrants,
+        ProjectRoles $projectRoles,
+    ): ?string {
+        if ($tableCount > 1) {
+            return sprintf('Table "%s" is listed %d times in the target schema.', $fullTableName, $tableCount);
+        }
+        if (count($ownershipGrants) === 0) {
+            return sprintf('Table "%s" has no OWNERSHIP grant.', $fullTableName);
+        }
+        if (count($ownershipGrants) > 1) {
+            return sprintf(
+                'Table "%s" has %d OWNERSHIP grants, expected one.',
+                $fullTableName,
+                count($ownershipGrants),
+            );
+        }
+
+        $ownerRoleName = array_values($ownershipGrants)[0]->getGrantedBy();
+        $ownerRole = $projectRoles->getRoles()[$ownerRoleName] ?? null;
+        if ($ownerRole === null) {
+            return sprintf('Owner role "%s" of table "%s" is not a project role.', $ownerRoleName, $fullTableName);
+        }
+        if (count($ownerRole->getAssignedGrants()->getWarehouseGrants()) === 0) {
+            return sprintf('Owner role "%s" of table "%s" has no warehouse grant.', $ownerRoleName, $fullTableName);
+        }
+        return null;
+    }
+
+    /**
+     * Returns no tables when the OLD database or schema does not exist.
+     *
+     * @return array<string, array<string, string|null>>
+     */
+    private function getTablesInOldSchema(string $mainRole, string $oldDatabase, string $schema): array
+    {
+        $currentRole = $this->destinationConnection->getCurrentRole();
+        try {
+            $this->destinationConnection->useRole($mainRole);
+            $tables = $this->destinationConnection->fetchAll(sprintf(
+                'SHOW TABLES IN SCHEMA %s.%s;',
+                Helper::quoteIdentifier($oldDatabase),
+                Helper::quoteIdentifier($schema),
+            ));
+        } catch (RuntimeException | CannotAccessObjectException $e) {
+            // Expected when there is no OLD database. Any other cause (a missing grant, a transient
+            // error) turns every clone in the schema into a full copy, so the reason must be visible.
+            $this->logger->warning(sprintf(
+                'Schema "%s.%s" is not available, no table will be cloned from it: %s',
+                $oldDatabase,
+                $schema,
+                $e->getMessage(),
+            ));
+            return [];
+        } finally {
+            $this->destinationConnection->useRole($currentRole);
+        }
+
+        $tablesByName = [];
+        foreach ($tables as $table) {
+            $tablesByName[(string) $table['name']] = $table;
+        }
+        return $tablesByName;
+    }
+
+    /**
+     * @param list<string> $skippedTables
+     */
+    private function logSkippedTables(array $skippedTables): void
+    {
+        if ($skippedTables === []) {
+            return;
+        }
+        $message = sprintf(
+            'Skipped %d table(s) because of failed checks: %s',
+            count($skippedTables),
+            implode(', ', array_slice($skippedTables, 0, self::SKIPPED_TABLES_LOG_LIMIT)),
+        );
+        if (count($skippedTables) > self::SKIPPED_TABLES_LOG_LIMIT) {
+            $message .= sprintf(' and %d more', count($skippedTables) - self::SKIPPED_TABLES_LOG_LIMIT);
+        }
+        $this->logger->warning($message);
     }
 
     private function compareTableMaxTimestamp(
