@@ -609,6 +609,12 @@ SQL;
             fn(&$item, $k) => $item = sprintf('%s = %s', strtoupper($k), QueryBuilder::quote($item))
         );
 
+        if ($this->isResumableRun() && $this->userExistsOnTarget($userGrant->getName())) {
+            $this->logger->warning(sprintf(
+                'User "%s" already exists on the target account, it will be reused.',
+                $userGrant->getName(),
+            ));
+        }
         $this->destinationConnection->query(sprintf(
             'CREATE USER %s%s %s',
             $this->ifNotExists(),
@@ -928,6 +934,22 @@ SQL;
         ));
         foreach ($databases as $row) {
             if ($row['name'] === $database) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function userExistsOnTarget(string $user): bool
+    {
+        // CREATE USER uses the name unquoted, so Snowflake stores it in upper case.
+        $storedName = strtoupper($user);
+        $users = $this->destinationConnection->fetchAll(sprintf(
+            'SHOW USERS LIKE %s',
+            QueryBuilder::quote($user),
+        ));
+        foreach ($users as $row) {
+            if ($row['name'] === $storedName) {
                 return true;
             }
         }

@@ -241,6 +241,38 @@ class MigrateStructureTest extends TestCase
         self::assertContains('DATABASE "KEBOOLA_1"', $this->createdOnTarget);
     }
 
+    public function testExistingUserIsReusedAndLoggedAsWarning(): void
+    {
+        $this->existingOnTarget = ['USER KEBOOLA_1_RO'];
+
+        $this->runStructureStep(synchronize: false);
+
+        self::assertSame(
+            ['User "KEBOOLA_1_RO" already exists on the target account, it will be reused.'],
+            $this->warningsContaining('already exists on the target account'),
+        );
+        self::assertContains('USER KEBOOLA_1', $this->createdOnTarget);
+        self::assertNotContains('USER KEBOOLA_1_RO', $this->createdOnTarget);
+    }
+
+    public function testCleanRunLogsNoReusedUser(): void
+    {
+        $this->runStructureStep(synchronize: false);
+
+        self::assertSame([], $this->warningsContaining('already exists on the target account'));
+    }
+
+    public function testUserMatchingOnlyByWildcardOrCaseIsNotTreatedAsExisting(): void
+    {
+        $this->existingOnTarget = ['USER KEBOOLAX1_RO', 'USER keboola_1_ro'];
+
+        $this->runStructureStep(synchronize: false);
+
+        self::assertSame([], $this->warningsContaining('already exists on the target account'));
+        self::assertContains('USER KEBOOLA_1_RO', $this->createdOnTarget);
+        self::assertContains("target fetch: SHOW USERS LIKE 'KEBOOLA_1_RO'", $this->log);
+    }
+
     public function testResumeAfterFailureCreatesOnlyMissingObjects(): void
     {
         $this->existingOnTarget = [
@@ -405,6 +437,9 @@ class MigrateStructureTest extends TestCase
      */
     private function targetFetch(string $sql): array
     {
+        if (preg_match("/^SHOW USERS LIKE '(.+)'$/", $sql, $matches) === 1) {
+            return $this->existingUsersLike($matches[1]);
+        }
         return match ($sql) {
             "SHOW ROLES LIKE 'KEBOOLA_STORAGE'" => in_array('ROLE "KEBOOLA_STORAGE"', $this->existingOnTarget)
                 ? [['name' => self::MAIN_ROLE]]
@@ -480,6 +515,7 @@ class MigrateStructureTest extends TestCase
     private function removeExistenceChecks(array $log): array
     {
         $log = array_filter($log, fn(string $v) => $v !== "target fetch: SHOW DATABASES LIKE 'KEBOOLA_1'");
+        $log = array_filter($log, fn(string $v) => !str_starts_with($v, 'target fetch: SHOW USERS LIKE '));
         return array_values(array_map(
             fn(string $v) => (string) preg_replace(
                 [
@@ -496,6 +532,39 @@ class MigrateStructureTest extends TestCase
             ),
             $log,
         ));
+    }
+
+    /**
+     * Works like Snowflake LIKE: case-insensitive, "_" matches one character, "%" any characters.
+     *
+     * @return array<int, array<string, string>>
+     */
+    private function existingUsersLike(string $pattern): array
+    {
+        $regex = '/^' . strtr(preg_quote($pattern, '/'), ['_' => '.', '%' => '.*']) . '$/i';
+        $users = [];
+        foreach ($this->existingOnTarget as $object) {
+            if (!str_starts_with($object, 'USER ')) {
+                continue;
+            }
+            $name = substr($object, strlen('USER '));
+            if (preg_match($regex, $name) === 1) {
+                $users[] = ['name' => $name];
+            }
+        }
+        return $users;
+    }
+
+    /**
+     * @return string[]
+     */
+    private function warningsContaining(string $needle): array
+    {
+        $warnings = array_filter(
+            $this->logger->records,
+            fn(array $record) => $record['level'] === 'warning' && str_contains($record['message'], $needle),
+        );
+        return array_values(array_column($warnings, 'message'));
     }
 
     private function maskPassword(string $sql): string
