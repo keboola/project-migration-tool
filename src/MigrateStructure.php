@@ -663,6 +663,9 @@ SQL;
         ));
 
         $views = array_filter($views, fn($v) => !in_array($v['schema_name'], self::SKIP_CLONE_SCHEMAS));
+        if ($this->isResumableRun() && $views) {
+            $views = $this->removeViewsExistingOnTarget($database, $views);
+        }
 
         $try = 0;
         while ($views && $try < 5) {
@@ -957,6 +960,34 @@ SQL;
             }
         }
         return false;
+    }
+
+    /**
+     * @param array<array<string, string>> $views
+     * @return array<array<string, string>>
+     */
+    private function removeViewsExistingOnTarget(string $database, array $views): array
+    {
+        $targetViews = [];
+        foreach ($this->destinationConnection->fetchAll(sprintf(
+            'SHOW VIEWS IN DATABASE %s;',
+            Helper::quoteIdentifier($database),
+        )) as $targetView) {
+            $targetViews[] = [$targetView['schema_name'], $targetView['name']];
+        }
+
+        return array_filter($views, function (array $view) use ($targetViews): bool {
+            if (!in_array([$view['schema_name'], $view['name']], $targetViews, true)) {
+                return true;
+            }
+            $this->logger->info(sprintf(
+                'View %s.%s.%s already exists on the target account, it will be reused.',
+                Helper::quoteIdentifier($view['database_name']),
+                Helper::quoteIdentifier($view['schema_name']),
+                Helper::quoteIdentifier($view['name']),
+            ));
+            return false;
+        });
     }
 
     private function assert(bool $assert, string $message): bool

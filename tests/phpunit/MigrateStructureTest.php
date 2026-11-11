@@ -155,6 +155,12 @@ class MigrateStructureTest extends TestCase
     /** @var array<string, string> statement prefix => error message */
     private array $failingStatements = [];
 
+    /** @var array<int, array<string, string>> */
+    private array $sourceViews = [];
+
+    /** @var array<string, string> view => view it selects from */
+    private array $viewDependencies = [];
+
     private TestLogger $logger;
 
     public function testSynchronizeRunSendsSameStatementsAsBefore(): void
@@ -355,6 +361,52 @@ class MigrateStructureTest extends TestCase
         ));
     }
 
+    public function testExistingViewIsNotRetriedOnResume(): void
+    {
+        $this->addSourceView('v1');
+        $this->addSourceView('v2', 'v3');
+        $this->addSourceView('v3');
+        $this->existingOnTarget = ['VIEW ' . self::viewId('v1')];
+
+        $this->runStructureStep(synchronize: false);
+
+        self::assertSame(0, $this->countViewAttempts('v1'));
+        self::assertContains('target fetch: SHOW VIEWS IN DATABASE "KEBOOLA_1";', $this->log);
+        self::assertTrue($this->logger->hasInfoThatContains(
+            'View "KEBOOLA_1"."in.c-main"."v1" already exists on the target account, it will be reused.',
+        ));
+        self::assertFalse($this->logger->hasInfoThatContains('Skip creating view "KEBOOLA_1"."in.c-main"."v1"'));
+        self::assertSame(2, $this->countViewAttempts('v2'));
+        self::assertSame(1, $this->countViewAttempts('v3'));
+        self::assertSame(
+            ['VIEW ' . self::viewId('v3'), 'VIEW ' . self::viewId('v2')],
+            array_values(array_filter($this->createdOnTarget, fn(string $v) => str_starts_with($v, 'VIEW '))),
+        );
+    }
+
+    public function testViewWithMissingDependencyIsStillRetriedFiveTimes(): void
+    {
+        $this->addSourceView('v4', 'missing');
+
+        $this->runStructureStep(synchronize: false);
+
+        self::assertSame(5, $this->countViewAttempts('v4'));
+        self::assertTrue($this->logger->hasInfoThatContains('Skip creating view "KEBOOLA_1"."in.c-main"."v4"'));
+        self::assertNotContains('VIEW ' . self::viewId('v4'), $this->createdOnTarget);
+    }
+
+    public function testSynchronizeRunDoesNotListTargetViews(): void
+    {
+        $this->addSourceView('v2', 'v3');
+        $this->addSourceView('v3');
+
+        $this->runStructureStep(synchronize: true);
+
+        self::assertNotContains('target fetch: SHOW VIEWS IN DATABASE "KEBOOLA_1";', $this->log);
+        self::assertSame(2, $this->countViewAttempts('v2'));
+        self::assertSame(1, $this->countViewAttempts('v3'));
+    }
+
     public function testResumeAfterFailureCreatesOnlyMissingObjects(): void
     {
         $this->existingOnTarget = [
@@ -507,7 +559,7 @@ class MigrateStructureTest extends TestCase
             'SHOW GRANTS TO USER "KEBOOLA_1"', 'SHOW GRANTS TO USER "KEBOOLA_1_RO"' => [],
             'SHOW PRIMARY KEYS IN SCHEMA "KEBOOLA_1"."in.c-main";' => [['table_name' => 't1', 'column_name' => 'id']],
             'SHOW PRIMARY KEYS IN SCHEMA "KEBOOLA_1"."out.c-main";' => [],
-            'SHOW VIEWS IN DATABASE "KEBOOLA_1";',
+            'SHOW VIEWS IN DATABASE "KEBOOLA_1";' => $this->sourceViews,
             'SHOW FUNCTIONS IN DATABASE "KEBOOLA_1";',
             'SHOW PROCEDURES IN DATABASE "KEBOOLA_1";' => [],
             default => self::fail('Unexpected source fetch: ' . $sql),
@@ -523,6 +575,7 @@ class MigrateStructureTest extends TestCase
             return $this->existingUsersLike($matches[1]);
         }
         return match ($sql) {
+            'SHOW VIEWS IN DATABASE "KEBOOLA_1";' => $this->existingViews(),
             "SHOW ROLES LIKE 'KEBOOLA_STORAGE'" => in_array('ROLE "KEBOOLA_STORAGE"', $this->existingOnTarget)
                 ? [['name' => self::MAIN_ROLE]]
                 : [],
@@ -575,7 +628,7 @@ class MigrateStructureTest extends TestCase
 
         $object = null;
         $ifNotExists = false;
-        $pattern = '/^CREATE\s+(?:TRANSIENT\s+)?(DATABASE|SCHEMA|USER|TABLE|ROLE|WAREHOUSE)\s+'
+        $pattern = '/^CREATE\s+(?:TRANSIENT\s+)?(DATABASE|SCHEMA|USER|TABLE|ROLE|WAREHOUSE|VIEW)\s+'
             . '(IF NOT EXISTS\s+)?(\S+)/';
         if (preg_match($pattern, $sql, $matches) === 1) {
             $object = $matches[1] . ' ' . $matches[3];
@@ -585,6 +638,11 @@ class MigrateStructureTest extends TestCase
         }
         if ($object === null) {
             return;
+        }
+
+        $dependency = $this->viewDependencies[$object] ?? null;
+        if ($dependency !== null && !in_array($dependency, $this->existingOnTarget)) {
+            throw new RuntimeException(sprintf('Object \'%s\' does not exist or not authorized.', $dependency));
         }
 
         if (in_array($object, $this->existingOnTarget)) {
@@ -644,6 +702,48 @@ class MigrateStructureTest extends TestCase
             }
         }
         return $users;
+    }
+
+    /**
+     * @return array<int, array<string, string>>
+     */
+    private function existingViews(): array
+    {
+        $views = [];
+        foreach ($this->existingOnTarget as $object) {
+            if (preg_match('/^VIEW "KEBOOLA_1"\."([^"]+)"\."([^"]+)"$/', $object, $matches) === 1) {
+                $views[] = ['database_name' => self::DATABASE, 'schema_name' => $matches[1], 'name' => $matches[2]];
+            }
+        }
+        return $views;
+    }
+
+    private function addSourceView(string $name, ?string $selectsFromView = null): void
+    {
+        $from = $selectsFromView === null ? '"KEBOOLA_1"."in.c-main"."t1"' : self::viewId($selectsFromView);
+        $this->sourceViews[] = [
+            'name' => $name,
+            'schema_name' => 'in.c-main',
+            'database_name' => self::DATABASE,
+            'owner' => self::DATABASE,
+            'text' => sprintf('CREATE VIEW %s AS SELECT * FROM %s', self::viewId($name), $from),
+        ];
+        if ($selectsFromView !== null) {
+            $this->viewDependencies['VIEW ' . self::viewId($name)] = 'VIEW ' . self::viewId($selectsFromView);
+        }
+    }
+
+    private static function viewId(string $name): string
+    {
+        return sprintf('"KEBOOLA_1"."in.c-main"."%s"', $name);
+    }
+
+    private function countViewAttempts(string $name): int
+    {
+        return count(array_filter(
+            $this->log,
+            fn(string $v) => str_starts_with($v, 'target: CREATE VIEW ' . self::viewId($name) . ' '),
+        ));
     }
 
     /**
