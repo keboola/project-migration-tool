@@ -43,6 +43,9 @@ class Connection extends AdapterConnection
         parent::query($sql, $bind);
     }
 
+    /**
+     * @internal Public only so tests can call it without an initialized adapter. Use query().
+     */
     public function assertQueryIsAllowed(string $sql): void
     {
         // The role is read from the server and not cached, because raw "USE ROLE" statements can change it.
