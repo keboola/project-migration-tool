@@ -133,7 +133,6 @@ class MigrateData
                     $shareRows = self::toRowCount($tableInShare['rows'] ?? null);
                     $targetRows = self::toRowCount($table['rows'] ?? null);
 
-                    $migrated = false;
                     if ($this->config->isSynchronizeRun()) {
                         $sameTimestampAsTarget = $this->compareTableMaxTimestamp(
                             $ownershipOnTable->getGrantedBy(),
@@ -201,7 +200,6 @@ class MigrateData
                             foreach ($tableGrants as $tableGrant) {
                                 $this->destinationConnection->assignGrantToRole($tableGrant);
                             }
-                            $migrated = true;
                         } elseif ($decision['action'] === self::SYNC_COPY) {
                             $this->logger->info(sprintf('Migrate data for table "%s".', $tableName));
                             $this->destinationConnection->query(sprintf(
@@ -220,11 +218,9 @@ class MigrateData
                                 Helper::quoteIdentifier($schemaName),
                                 Helper::quoteIdentifier($tableName),
                             ));
-                            $migrated = true;
                         }
-                    }
 
-                    if ($migrated) {
+                        // The logged decision is final: a "skip" must not reach the INSERT below.
                         continue;
                     }
 
@@ -364,10 +360,13 @@ class MigrateData
                 Helper::quoteIdentifier($schema),
             ));
         } catch (RuntimeException | CannotAccessObjectException $e) {
-            $this->logger->info(sprintf(
-                'Schema "%s.%s" is not available, no table will be cloned from it.',
+            // Expected when there is no OLD database. Any other cause (a missing grant, a transient
+            // error) turns every clone in the schema into a full copy, so the reason must be visible.
+            $this->logger->warning(sprintf(
+                'Schema "%s.%s" is not available, no table will be cloned from it: %s',
                 $oldDatabase,
                 $schema,
+                $e->getMessage(),
             ));
             return [];
         } finally {

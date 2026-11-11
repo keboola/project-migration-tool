@@ -156,6 +156,22 @@ class MigrateDataTest extends TestCase
         $this->runMigration($results, ['synchronize' => true]);
 
         self::assertSame([], $this->queries);
+        self::assertSame(
+            ['Schema "DB_OLD.S" is not available, no table will be cloned from it: Database "DB_OLD" does not exist'],
+            $this->getWarnings(),
+        );
+    }
+
+    public function testSynchronizeSkipDecisionNeverInserts(): void
+    {
+        // Same max timestamp, empty target, unknown share row count: the decision is "skip".
+        $this->runMigration(
+            self::synchronizeResults(shareRows: '', targetRows: '0', oldRows: null),
+            ['synchronize' => true],
+        );
+
+        self::assertSame([], $this->queries);
+        self::assertTrue($this->logger->hasInfoThatContains('Table "DB.S.T": skip'));
     }
 
     /**
