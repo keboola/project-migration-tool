@@ -212,7 +212,8 @@ class MigrateStructure
                     $this->logger->info(sprintf('Creating table structure "%s"."%s"', $schemaName, $tableName));
                     try {
                         $this->destinationConnection->query(sprintf(
-                            'CREATE TABLE %s.%s.%s LIKE %s.%s.%s;',
+                            'CREATE TABLE %s%s.%s.%s LIKE %s.%s.%s;',
+                            $this->ifNotExists(),
                             Helper::quoteIdentifier($database),
                             Helper::quoteIdentifier($schemaName),
                             Helper::quoteIdentifier($tableName),

@@ -152,6 +152,9 @@ class MigrateStructureTest extends TestCase
 
     private bool $mainRoleGrantedToTargetUser = true;
 
+    /** @var array<string, string> statement prefix => error message */
+    private array $failingStatements = [];
+
     private TestLogger $logger;
 
     public function testSynchronizeRunSendsSameStatementsAsBefore(): void
@@ -327,6 +330,29 @@ class MigrateStructureTest extends TestCase
         );
         self::assertNotContains('WAREHOUSE "KEBOOLA_PROD"', $this->createdOnTarget);
         self::assertNotContains('USER KEBOOLA_STORAGE', $this->createdOnTarget);
+    }
+
+    public function testExistingTableIsNotLoggedAsSkippedButRealErrorIs(): void
+    {
+        $this->existingOnTarget = [
+            'DATABASE "KEBOOLA_1"',
+            'SCHEMA "KEBOOLA_1"."in.c-main"',
+            'TABLE "KEBOOLA_1"."in.c-main"."t1"',
+        ];
+        $this->failingStatements = [
+            'CREATE TABLE IF NOT EXISTS "KEBOOLA_1"."out.c-main"."t3"' => 'Unsupported data type \'GEOMETRY\'',
+        ];
+
+        $this->runStructureStep(synchronize: false);
+
+        self::assertContains(
+            'target: CREATE TABLE IF NOT EXISTS "KEBOOLA_1"."in.c-main"."t1" LIKE "KEBOOLA_1_SHARE"."in.c-main"."t1";',
+            $this->log,
+        );
+        self::assertFalse($this->logger->hasInfoThatContains('Skip creating table "KEBOOLA_1"."in.c-main"."t1"'));
+        self::assertTrue($this->logger->hasInfoThatContains(
+            'Warning: Skip creating table "KEBOOLA_1"."out.c-main"."t3". Error: "Unsupported data type \'GEOMETRY\'".',
+        ));
     }
 
     public function testResumeAfterFailureCreatesOnlyMissingObjects(): void
@@ -534,6 +560,12 @@ class MigrateStructureTest extends TestCase
             return;
         }
 
+        foreach ($this->failingStatements as $prefix => $message) {
+            if (str_starts_with($sql, $prefix)) {
+                throw new RuntimeException($message);
+            }
+        }
+
         if (str_starts_with($sql, 'GRANT OWNERSHIP ON DATABASE KEBOOLA_1 ')
             && $this->targetRole === self::MAIN_ROLE
             && in_array('DATABASE "KEBOOLA_1"', $this->preExistingOnTarget)
@@ -579,11 +611,13 @@ class MigrateStructureTest extends TestCase
                     '/^target: CREATE DATABASE IF NOT EXISTS /',
                     '/^target: CREATE (TRANSIENT)? SCHEMA IF NOT EXISTS /',
                     '/^target: CREATE USER IF NOT EXISTS (KEBOOLA_1(_RO)?) /',
+                    '/^target: CREATE TABLE IF NOT EXISTS /',
                 ],
                 [
                     'target: CREATE DATABASE ',
                     'target: CREATE $1 SCHEMA ',
                     'target: CREATE USER $1 ',
+                    'target: CREATE TABLE ',
                 ],
                 $v,
             ),
