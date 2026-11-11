@@ -65,8 +65,15 @@ class MigrateStructure
             $sourceDatabase = current($sourceDatabases);
 
             $this->logger->info(sprintf('Migrate database "%s".', $database));
+            if ($this->isResumableRun() && $this->databaseExistsOnTarget($database)) {
+                $this->logger->info(sprintf(
+                    'Database "%s" already exists on the target account, it will be reused.',
+                    $database,
+                ));
+            }
             $this->destinationConnection->query(sprintf(
-                'CREATE DATABASE %s DATA_RETENTION_TIME_IN_DAYS=%s;',
+                'CREATE DATABASE %s%s DATA_RETENTION_TIME_IN_DAYS=%s;',
+                $this->ifNotExists(),
                 Helper::quoteIdentifier($database),
                 $sourceDatabase['retention_time']
             ));
@@ -123,8 +130,9 @@ class MigrateStructure
 
                 $this->destinationConnection->useRole(current($ownershipOnSchema)->getGrantedBy());
                 $this->destinationConnection->query(sprintf(
-                    'CREATE %s SCHEMA %s.%s %s DATA_RETENTION_TIME_IN_DAYS = %s;',
+                    'CREATE %s SCHEMA %s%s.%s %s DATA_RETENTION_TIME_IN_DAYS = %s;',
                     in_array('TRANSIENT', $schemaOptions) ? 'TRANSIENT' : '',
+                    $this->ifNotExists(),
                     Helper::quoteIdentifier($database),
                     Helper::quoteIdentifier($schemaName),
                     in_array('MANAGED ACCESS', $schemaOptions) ? 'WITH MANAGED ACCESS' : '',
@@ -183,7 +191,8 @@ class MigrateStructure
                     $this->logger->info(sprintf('Creating table structure "%s"."%s"', $schemaName, $tableName));
                     try {
                         $this->destinationConnection->query(sprintf(
-                            'CREATE TABLE %s.%s.%s LIKE %s.%s.%s;',
+                            'CREATE TABLE %s%s.%s.%s LIKE %s.%s.%s;',
+                            $this->ifNotExists(),
                             Helper::quoteIdentifier($database),
                             Helper::quoteIdentifier($schemaName),
                             Helper::quoteIdentifier($tableName),
@@ -263,7 +272,9 @@ class MigrateStructure
             if (!$mainRoleExistsOnTargetUser) {
                 throw new UserException('Main role exists but is not assigned to migrate user.');
             }
-            return;
+            if (!$this->isResumableRun()) {
+                return;
+            }
         }
 
         $this->destinationConnection->createRole(
@@ -580,8 +591,15 @@ SQL;
             fn(&$item, $k) => $item = sprintf('%s = %s', strtoupper($k), QueryBuilder::quote($item))
         );
 
+        if ($this->isResumableRun() && $this->userExistsOnTarget($userGrant->getName())) {
+            $this->logger->warning(sprintf(
+                'User "%s" already exists on the target account, it will be reused.',
+                $userGrant->getName(),
+            ));
+        }
         $this->destinationConnection->query(sprintf(
-            'CREATE USER %s %s',
+            'CREATE USER %s%s %s',
+            $this->ifNotExists(),
             $userGrant->getName(),
             implode(' ', $describeUser),
         ));
@@ -624,6 +642,9 @@ SQL;
         ));
 
         $views = array_filter($views, fn($v) => !in_array($v['schema_name'], self::SKIP_CLONE_SCHEMAS));
+        if ($this->isResumableRun() && $views) {
+            $views = $this->removeViewsExistingOnTarget($database, $views);
+        }
 
         $try = 0;
         while ($views && $try < 5) {
@@ -873,6 +894,79 @@ SQL;
             }
             $this->destinationConnection->assignGrantToRole($proceduresGrant);
         }
+    }
+
+    /**
+     * A synchronize run starts from a target that Cleanup::preMigration() has cleared, so it keeps
+     * failing on an object that still exists instead of reusing it.
+     */
+    private function isResumableRun(): bool
+    {
+        return !$this->config->isSynchronizeRun();
+    }
+
+    private function ifNotExists(): string
+    {
+        return $this->isResumableRun() ? 'IF NOT EXISTS ' : '';
+    }
+
+    private function databaseExistsOnTarget(string $database): bool
+    {
+        // LIKE is case-insensitive and "_" matches any character, so compare the names exactly.
+        $databases = $this->destinationConnection->fetchAll(sprintf(
+            'SHOW DATABASES LIKE %s',
+            QueryBuilder::quote($database),
+        ));
+        foreach ($databases as $row) {
+            if ($row['name'] === $database) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function userExistsOnTarget(string $user): bool
+    {
+        // CREATE USER uses the name unquoted, so Snowflake stores it in upper case.
+        $storedName = strtoupper($user);
+        $users = $this->destinationConnection->fetchAll(sprintf(
+            'SHOW USERS LIKE %s',
+            QueryBuilder::quote($user),
+        ));
+        foreach ($users as $row) {
+            if ($row['name'] === $storedName) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * @param array<array<string, string>> $views
+     * @return array<array<string, string>>
+     */
+    private function removeViewsExistingOnTarget(string $database, array $views): array
+    {
+        $targetViews = [];
+        foreach ($this->destinationConnection->fetchAll(sprintf(
+            'SHOW VIEWS IN DATABASE %s;',
+            Helper::quoteIdentifier($database),
+        )) as $targetView) {
+            $targetViews[] = [$targetView['schema_name'], $targetView['name']];
+        }
+
+        return array_filter($views, function (array $view) use ($targetViews): bool {
+            if (!in_array([$view['schema_name'], $view['name']], $targetViews, true)) {
+                return true;
+            }
+            $this->logger->info(sprintf(
+                'View %s.%s.%s already exists on the target account, it will be reused.',
+                Helper::quoteIdentifier($view['database_name']),
+                Helper::quoteIdentifier($view['schema_name']),
+                Helper::quoteIdentifier($view['name']),
+            ));
+            return false;
+        });
     }
 
     private function assert(bool $assert, string $message): bool
