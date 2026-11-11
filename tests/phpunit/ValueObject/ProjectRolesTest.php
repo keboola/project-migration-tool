@@ -169,7 +169,8 @@ class ProjectRolesTest extends TestCase
         }
         $duration = microtime(true) - $start;
 
-        self::assertLessThan(2.0, $duration, sprintf('5,000 lookups took %.2f s', $duration));
+        // Loose bound on purpose: the old filter needs minutes here, a busy CI runner must not fail this.
+        self::assertLessThan(10.0, $duration, sprintf('5,000 lookups took %.2f s', $duration));
     }
 
     /**

@@ -14,6 +14,9 @@ class ProjectRoles
     /**
      * Grant name => (position in getTableGrantsFromAllRoles() => grant)
      *
+     * Built on first use and cleared only by addRole(). Grants changed later on a role that is
+     * already added (Role::setGrants()) are not seen, so set the grants before calling addRole().
+     *
      * @var array<string, array<int, GrantToRole>>|null
      */
     private ?array $tableGrantsByName = null;
