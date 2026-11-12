@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ProjectMigrationTool;
 
 use Keboola\Component\UserException;
+use Keboola\SnowflakeDbAdapter\Exception\RuntimeException;
 use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Snowflake\Helper;
 use ProjectMigrationTool\Snowflake\ReplicationGroup;
@@ -160,12 +161,30 @@ SQL);
                 Helper::quoteIdentifier($shareDbName)
             ));
 
-            $this->destinationConnection->query(sprintf(
-                'CREATE DATABASE %s FROM SHARE IDENTIFIER(\'%s.%s\');',
-                Helper::quoteIdentifier($shareDbName),
-                $connection->getAccount(),
-                self::MIGRATION_SHARE_PREFIX . $database
-            ));
+            $shareName = self::MIGRATION_SHARE_PREFIX . $database;
+            try {
+                $this->destinationConnection->query(sprintf(
+                    'CREATE DATABASE %s FROM SHARE IDENTIFIER(\'%s.%s\');',
+                    Helper::quoteIdentifier($shareDbName),
+                    $connection->getAccount(),
+                    $shareName
+                ));
+            } catch (RuntimeException $e) {
+                if (str_contains($e->getMessage(), 'Insufficient privileges')
+                    || str_contains($e->getMessage(), 'SQL access control error')
+                ) {
+                    throw new UserException(sprintf(
+                        'Insufficient privileges to create database "%s" from share "%s". ' .
+                        'The destination Snowflake user needs the IMPORT SHARE privilege ' .
+                        'or a role with sufficient permissions to create databases from shares. ' .
+                        'Original error: %s',
+                        $shareDbName,
+                        $shareName,
+                        $e->getMessage()
+                    ), 0, $e);
+                }
+                throw $e;
+            }
         }
     }
 }
