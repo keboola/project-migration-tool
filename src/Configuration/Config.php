@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ProjectMigrationTool\Configuration;
 
 use Keboola\Component\Config\BaseConfig;
+use Keboola\Component\UserException;
 
 class Config extends BaseConfig
 {
@@ -14,6 +15,8 @@ class Config extends BaseConfig
 
     public const ACTION_MIGRATE_STRUCTURE = 'runMigrateStructure';
 
+    public const ACTION_MIGRATE_DATA_GATEWAY = 'runMigrateDataGatewayApp';
+
     public const ACTION_CLEANUP = 'runCleanup';
 
     public const ACTION_CLEANUP_SOURCE_ACCOUNT = 'runCleanupSourceAccount';
@@ -21,6 +24,16 @@ class Config extends BaseConfig
     public function getWarehouseSize(): string
     {
         return $this->getStringValue(['parameters', 'warehouseSize'], 'SMALL');
+    }
+
+    public function getReplicationRefreshTimeout(): int
+    {
+        return $this->getIntValue(['parameters', 'replicationRefreshTimeout'], 3600);
+    }
+
+    public function getReplicationRefreshPollInterval(): int
+    {
+        return $this->getIntValue(['parameters', 'replicationRefreshPollInterval'], 30);
     }
 
     public function getRunAction(): string
@@ -47,6 +60,13 @@ class Config extends BaseConfig
         return $value;
     }
 
+    public function isCheckReportOnly(): bool
+    {
+        /** @var bool $value */
+        $value = $this->getValue(['parameters', 'checkReportOnly'], false);
+        return $value;
+    }
+
     public function getSynchronizeDryPremigrationCleanupRun(): bool
     {
         /** @var bool $value */
@@ -57,6 +77,11 @@ class Config extends BaseConfig
     public function hasMigrateAccount(): bool
     {
         return is_array($this->getValue(['parameters', 'credentials', 'migration'], false));
+    }
+
+    public function hasSourceAccount(): bool
+    {
+        return is_array($this->getValue(['parameters', 'credentials', 'source'], false));
     }
 
     public function getSourceSnowflakeHost(): string
@@ -153,5 +178,31 @@ class Config extends BaseConfig
     public function getMigrationSnowflakeRole(): string
     {
         return $this->getStringValue(['parameters', 'credentials', 'migration', 'role']);
+    }
+
+    public function getProjectsUrlStack(): string
+    {
+        return $this->getStringValue(['parameters', 'stackUrl']);
+    }
+
+    /**
+     * @return string[] Array of project tokens
+     */
+    public function getProjectsToken(): array
+    {
+        $jsonString = $this->getStringValue(['parameters', '#projectsToken']);
+        $decoded = json_decode($jsonString, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new UserException(
+                sprintf('Invalid JSON in projectsToken: %s', json_last_error_msg())
+            );
+        }
+
+        if (!is_array($decoded)) {
+            throw new UserException('projectsToken must be a JSON array');
+        }
+
+        return $decoded;
     }
 }

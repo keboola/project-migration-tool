@@ -18,6 +18,10 @@ class Connection extends AdapterConnection
 
     private ?string $account = null;
 
+    private ?string $organizationName = null;
+
+    private ?string $accountName = null;
+
     private ?string $actualRole = null;
 
     private string $defaultRole;
@@ -35,10 +39,19 @@ class Connection extends AdapterConnection
 
     public function query(string $sql, array $bind = []): void
     {
-        if ($this->getCurrentRole() === 'ACCOUNTADMIN' && str_starts_with($sql, 'DROP')) {
+        $this->assertQueryIsAllowed($sql);
+        parent::query($sql, $bind);
+    }
+
+    /**
+     * @internal Public only so tests can call it without an initialized adapter. Use query().
+     */
+    public function assertQueryIsAllowed(string $sql): void
+    {
+        // The role is read from the server and not cached, because raw "USE ROLE" statements can change it.
+        if (preg_match('/^\s*DROP/i', $sql) === 1 && $this->getCurrentRole() === 'ACCOUNTADMIN') {
             throw new UserException('Run DROP query on ACCOUNTADMIN role is not allowed.');
         }
-        parent::query($sql, $bind);
     }
 
     public function useRole(string $roleName, bool $forceUse = false): void
@@ -81,6 +94,28 @@ class Connection extends AdapterConnection
         }
 
         return $this->account;
+    }
+
+    public function getOrganizationName(): string
+    {
+        if (!$this->organizationName) {
+            $result = $this->fetchAll('SELECT CURRENT_ORGANIZATION_NAME() AS "organizationName";');
+
+            $this->organizationName = $result[0]['organizationName'];
+        }
+
+        return $this->organizationName;
+    }
+
+    public function getAccountName(): string
+    {
+        if (!$this->accountName) {
+            $result = $this->fetchAll('SELECT CURRENT_ACCOUNT_NAME() AS "accountName";');
+
+            $this->accountName = $result[0]['accountName'];
+        }
+
+        return $this->accountName;
     }
 
     public function getCurrentRole(): string

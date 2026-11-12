@@ -29,6 +29,9 @@ class Component extends BaseComponent
             case Config::ACTION_CLEANUP_SOURCE_ACCOUNT:
                 $this->runCleanupSourceAccount();
                 break;
+            case Config::ACTION_MIGRATE_DATA_GATEWAY:
+                $this->runMigrateDataGatewayApp();
+                break;
             default:
                 throw new Exception(sprintf('Action "%s" is not supported.', $this->getConfig()->getAction()));
         }
@@ -104,6 +107,16 @@ class Component extends BaseComponent
         $migrateData->migrate($mainRole, $roles);
     }
 
+    private function runMigrateDataGatewayApp(): void
+    {
+        $migrateFactory = new MigrateFactory($this->getLogger(), $this->getConfig());
+        $migrateDataGatewayApp = $migrateFactory->createMigrateDataGatewayApp();
+
+        $migrateDataGatewayApp->migrate(
+            $this->getConfig()->getProjectsToken(),
+        );
+    }
+
     private function runCleanup(): void
     {
         $migrateFactory = new MigrateFactory($this->getLogger(), $this->getConfig());
@@ -112,19 +125,19 @@ class Component extends BaseComponent
 
         $this->getLogger()->info('Post-migration cleanup.');
         $cleanup->postMigration();
+
+        // Tear down the cross-region replication group (no-op for same-region migrations).
+        $this->getLogger()->info('Tearing down replication group.');
+        $cleanup->teardownReplication();
     }
 
     private function runCheckMigratedData(): void
     {
         $migrateFactory = new MigrateFactory($this->getLogger(), $this->getConfig());
-        $metadataFetcher = $migrateFactory->createMetadataFetcher();
         $migrationChecker = $migrateFactory->createMigrationChecker();
 
-        $this->getLogger()->info('Getting main role with grants');
-        $mainRoleWithGrants = $metadataFetcher->getMainRoleWithGrants();
-
         $this->getLogger()->info('Checking data.');
-        $migrationChecker->postMigrationCheckStructure($mainRoleWithGrants);
+        $migrationChecker->postMigrationCheckStructure();
 //        $migrationChecker->postMigrationCheckData($mainRoleWithGrants);
     }
 

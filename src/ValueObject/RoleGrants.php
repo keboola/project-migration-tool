@@ -75,13 +75,10 @@ class RoleGrants
         string $targetWarehouseName,
     ): void {
         assert($grant->getGrantedOn() === 'WAREHOUSE', 'Grant is not on WAREHOUSE');
-        if ($sourceWarehouseName !== $targetWarehouseName && str_starts_with($grant->getName(), $sourceWarehouseName)) {
+        $warehouseName = self::mapWarehouseName($grant->getName(), $sourceWarehouseName, $targetWarehouseName);
+        if ($warehouseName !== $grant->getName()) {
             $grant = GrantToRole::fromArray([
-                'name' => preg_replace(
-                    sprintf('/^%s/', $sourceWarehouseName),
-                    $targetWarehouseName,
-                    $grant->getName(),
-                ),
+                'name' => $warehouseName,
                 'privilege' => $grant->getPrivilege(),
                 'granted_on' => $grant->getGrantedOn(),
                 'granted_to' => $grant->getGrantedTo(),
@@ -91,6 +88,17 @@ class RoleGrants
             ]);
         }
         $this->warehouseGrants[] = $grant;
+    }
+
+    public static function mapWarehouseName(
+        string $warehouseName,
+        string $sourceWarehouseName,
+        string $targetWarehouseName,
+    ): string {
+        if ($sourceWarehouseName === $targetWarehouseName || !str_starts_with($warehouseName, $sourceWarehouseName)) {
+            return $warehouseName;
+        }
+        return (string) preg_replace(sprintf('/^%s/', $sourceWarehouseName), $targetWarehouseName, $warehouseName);
     }
 
     public function addUserGrant(GrantToRole $grant): void

@@ -11,7 +11,6 @@ use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Snowflake\BuildQueryHelper;
 use ProjectMigrationTool\Snowflake\Connection;
 use ProjectMigrationTool\Snowflake\Helper;
-use ProjectMigrationTool\ValueObject\FutureGrantToRole;
 use ProjectMigrationTool\ValueObject\GrantToRole;
 use ProjectMigrationTool\ValueObject\GrantToUser;
 use ProjectMigrationTool\ValueObject\ProjectRoles;
@@ -110,18 +109,8 @@ class MigrateStructure
 
                 $this->logger->info(sprintf('Migrate schema "%s".', $schemaName));
 
-                /** @var GrantToRole[] $schemaGrants */
-                $schemaGrants = Helper::filterSchemaGrants(
-                    $database,
-                    $schemaName,
-                    $projectRoles->getSchemaGrantsFromAllRoles()
-                );
-                /** @var FutureGrantToRole[] $schemaFutureGrants */
-                $schemaFutureGrants = Helper::filterSchemaGrants(
-                    $database,
-                    $schemaName,
-                    $projectRoles->getFutureTableGrantsFromAllRoles()
-                );
+                $schemaGrants = $projectRoles->getSchemaGrants($database, $schemaName);
+                $schemaFutureGrants = $projectRoles->getFutureTableGrants($database, $schemaName);
                 $ownershipOnSchema = array_filter($schemaGrants, fn($v) => $v->getPrivilege() === 'OWNERSHIP');
                 if (!$this->assert(
                     count($ownershipOnSchema) === 1,
@@ -164,17 +153,7 @@ class MigrateStructure
                 foreach ($tables as $table) {
                     $tableName = $table['name'];
 
-                    $tableGrants = array_filter(
-                        $projectRoles->getTableGrantsFromAllRoles(),
-                        function (GrantToRole $v) use ($database, $schemaName, $tableName) {
-                            $validSchema = Helper::generateFormattedQuoteCombinations(
-                                $database,
-                                $schemaName,
-                                $tableName
-                            );
-                            return in_array($v->getName(), $validSchema);
-                        }
-                    );
+                    $tableGrants = $projectRoles->getTableGrants($database, $schemaName, $tableName);
                     $ownershipOnTable = array_filter(
                         $tableGrants,
                         fn(GrantToRole $v) => $v->getPrivilege() === 'OWNERSHIP'

@@ -23,6 +23,7 @@ class ConfigDefinition extends BaseConfigDefinition
                     ->values([
                         Config::ACTION_MIGRATE_STRUCTURE,
                         Config::ACTION_MIGRATE_DATA,
+                        Config::ACTION_MIGRATE_DATA_GATEWAY,
                         Config::ACTION_CHECK,
                         Config::ACTION_CLEANUP,
                         Config::ACTION_CLEANUP_SOURCE_ACCOUNT,
@@ -91,8 +92,13 @@ class ConfigDefinition extends BaseConfigDefinition
                 ->arrayNode('migrateDatabases')
                     ->scalarPrototype()->end()
                 ->end()
+                ->scalarNode('stackUrl')->end()
+                ->scalarNode('#projectsToken')->end()
                 ->enumNode('warehouseSize')->values(['SMALL', 'MEDIUM', 'LARGE'])->defaultValue('SMALL')->end()
+                ->integerNode('replicationRefreshTimeout')->min(1)->defaultValue(3600)->end()
+                ->integerNode('replicationRefreshPollInterval')->min(1)->defaultValue(30)->end()
                 ->booleanNode('skipCheck')->defaultFalse()->end()
+                ->booleanNode('checkReportOnly')->defaultFalse()->end()
                 ->booleanNode('synchronize')->defaultFalse()->end()
                 ->booleanNode('dryPremigrationCleanupRun')->defaultTrue()->end()
             ->end()

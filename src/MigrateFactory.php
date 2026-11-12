@@ -8,10 +8,11 @@ use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Snowflake\Connection;
 use ProjectMigrationTool\Snowflake\ConnectionFactory;
 use Psr\Log\LoggerInterface;
+use RuntimeException;
 
 class MigrateFactory
 {
-    private Connection $sourceConnection;
+    private ?Connection $sourceConnection;
 
     private ?Connection $migrateConnection;
 
@@ -21,17 +22,19 @@ class MigrateFactory
     {
         // Create database connections
         $logger->info('Connecting to databases.');
-        $this->sourceConnection = ConnectionFactory::create(
-            $config->getSourceSnowflakeHost(),
-            $config->getSourceSnowflakeUser(),
-            $config->getSourceSnowflakePassword(),
-            $config->getSourceSnowflakePrivateKey(),
-            $config->getSourceSnowflakeWarehouse(),
-            $config->getSourceSnowflakeRole(),
-            'source',
-            $logger
-        );
-        $this->sourceConnection->useRole($config->getSourceSnowflakeRole());
+        if ($this->config->hasSourceAccount()) {
+            $this->sourceConnection = ConnectionFactory::create(
+                $config->getSourceSnowflakeHost(),
+                $config->getSourceSnowflakeUser(),
+                $config->getSourceSnowflakePassword(),
+                $config->getSourceSnowflakePrivateKey(),
+                $config->getSourceSnowflakeWarehouse(),
+                $config->getSourceSnowflakeRole(),
+                'source',
+                $logger
+            );
+            $this->sourceConnection->useRole($config->getSourceSnowflakeRole());
+        }
 
         if ($config->hasMigrateAccount()) {
             $this->migrateConnection = ConnectionFactory::create(
@@ -61,26 +64,38 @@ class MigrateFactory
 
     public function createCleanup(): Cleanup
     {
+        if ($this->sourceConnection === null) {
+            throw new RuntimeException('Source connection is required for cleanup operation');
+        }
         return new Cleanup(
             $this->config,
             $this->sourceConnection,
             $this->targetConnection,
             $this->logger,
+            $this->migrateConnection ?? null,
         );
     }
 
     public function createPrepareMigration(): PrepareMigration
     {
+        if ($this->sourceConnection === null) {
+            throw new RuntimeException('Source connection is required for migration preparation');
+        }
         return new PrepareMigration(
+            $this->config,
             $this->config->getDatabases(),
             $this->sourceConnection,
             $this->targetConnection,
+            $this->logger,
             $this->migrateConnection ?? null,
         );
     }
 
     public function createMetadataFetcher(): MetadataFetcher
     {
+        if ($this->sourceConnection === null) {
+            throw new RuntimeException('Source connection is required for metadata fetching');
+        }
         return new MetadataFetcher(
             $this->sourceConnection,
             $this->config,
@@ -89,6 +104,9 @@ class MigrateFactory
 
     public function createMigrateStructure(): MigrateStructure
     {
+        if ($this->sourceConnection === null) {
+            throw new RuntimeException('Source connection is required for structure migration');
+        }
         return new MigrateStructure(
             $this->sourceConnection,
             $this->targetConnection,
@@ -102,6 +120,9 @@ class MigrateFactory
 
     public function createMigrateData(): MigrateData
     {
+        if ($this->sourceConnection === null) {
+            throw new RuntimeException('Source connection is required for data migration');
+        }
         return new MigrateData(
             $this->sourceConnection,
             $this->targetConnection,
@@ -113,8 +134,20 @@ class MigrateFactory
         );
     }
 
+    public function createMigrateDataGatewayApp(): MigrateDataGatewayApp
+    {
+        return new MigrateDataGatewayApp(
+            $this->targetConnection,
+            $this->logger,
+            $this->config,
+        );
+    }
+
     public function createMigrationChecker(): MigrationChecker
     {
+        if ($this->sourceConnection === null) {
+            throw new RuntimeException('Source connection is required for migration checking');
+        }
         return new MigrationChecker(
             $this->sourceConnection,
             $this->targetConnection,
