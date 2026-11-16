@@ -152,6 +152,9 @@ class MigrateStructureTest extends TestCase
 
     private bool $mainRoleGrantedToTargetUser = true;
 
+    /** @var array<string, string> role => owner, the target role when not listed */
+    private array $roleOwners = [];
+
     /** @var array<string, string> statement prefix => error message */
     private array $failingStatements = [];
 
@@ -307,6 +310,43 @@ class MigrateStructureTest extends TestCase
             array_values(array_diff(self::ALL_OBJECTS, ['ROLE "KEBOOLA_STORAGE"'])),
             $this->createdOnTarget,
         );
+    }
+
+    public function testResumeWithMainRoleOwnedByAnotherRoleSkipsMainRoleSetup(): void
+    {
+        $this->existingOnTarget = ['ROLE "KEBOOLA_STORAGE"'];
+        $this->roleOwners = ['KEBOOLA_STORAGE' => 'SYSADMIN'];
+
+        $this->runStructureStep(synchronize: false);
+
+        $this->assertMainRoleSetupSkipped();
+    }
+
+    public function testRoleMatchingOnlyByWildcardOrCaseIsNotUsedForOwner(): void
+    {
+        $this->existingOnTarget = ['ROLE "KEBOOLAXSTORAGE"', 'ROLE "keboola_storage"'];
+
+        $this->runStructureStep(synchronize: false);
+
+        $this->assertMainRoleSetupSkipped();
+    }
+
+    private function assertMainRoleSetupSkipped(): void
+    {
+        self::assertTrue($this->logger->hasInfoThatContains(
+            'Main role "KEBOOLA_STORAGE" already exists and is not owned by "MIGRATE_TARGET", its setup is skipped.',
+        ));
+        foreach ($this->log as $statement) {
+            self::assertStringNotContainsString('"KEBOOLA_STORAGE" TO USER "MIGRATE_TARGET_USER"', $statement);
+            self::assertStringNotContainsString('ON ACCOUNT TO ROLE KEBOOLA_STORAGE', $statement);
+            self::assertStringNotContainsString('CREATE ROLE IF NOT EXISTS "KEBOOLA_STORAGE"', $statement);
+            self::assertStringNotContainsString('CREATE WAREHOUSE', $statement);
+            self::assertStringNotContainsString('ON WAREHOUSE KEBOOLA_PROD TO ROLE "KEBOOLA_STORAGE"', $statement);
+            self::assertStringNotContainsString('USER IF NOT EXISTS KEBOOLA_STORAGE', $statement);
+            self::assertStringNotContainsString('TO USER KEBOOLA_STORAGE', $statement);
+            self::assertStringNotContainsString('TO ROLE SYSADMIN', $statement);
+        }
+        self::assertNotContains('ROLE "KEBOOLA_STORAGE"', $this->createdOnTarget);
     }
 
     public function testMainRoleNotGrantedToTargetUserStillFails(): void
@@ -576,10 +616,8 @@ class MigrateStructureTest extends TestCase
         }
         return match ($sql) {
             'SHOW VIEWS IN DATABASE "KEBOOLA_1";' => $this->existingViews(),
-            "SHOW ROLES LIKE 'KEBOOLA_STORAGE'" => in_array('ROLE "KEBOOLA_STORAGE"', $this->existingOnTarget)
-                ? [['name' => self::MAIN_ROLE]]
-                : [],
-            'SHOW GRANTS TO USER "MIGRATE_TARGET_USER"' => in_array('ROLE "KEBOOLA_STORAGE"', $this->existingOnTarget)
+            "SHOW ROLES LIKE 'KEBOOLA_STORAGE'" => $this->existingRolesLike(self::MAIN_ROLE),
+            'SHOW GRANTS TO USER "MIGRATE_TARGET_USER"' => $this->existingRolesLike(self::MAIN_ROLE)
                 && $this->mainRoleGrantedToTargetUser
                 ? [['role' => self::MAIN_ROLE]]
                 : [],
@@ -702,6 +740,24 @@ class MigrateStructureTest extends TestCase
             }
         }
         return $users;
+    }
+
+    /**
+     * Works like Snowflake LIKE: case-insensitive, "_" matches one character, "%" any characters.
+     *
+     * @return array<int, array<string, string>>
+     */
+    private function existingRolesLike(string $pattern): array
+    {
+        $regex = '/^' . strtr(preg_quote($pattern, '/'), ['_' => '.', '%' => '.*']) . '$/i';
+        $roles = [];
+        foreach ($this->existingOnTarget as $object) {
+            if (preg_match('/^ROLE "(.+)"$/', $object, $matches) !== 1 || preg_match($regex, $matches[1]) !== 1) {
+                continue;
+            }
+            $roles[] = ['name' => $matches[1], 'owner' => $this->roleOwners[$matches[1]] ?? self::TARGET_ROLE];
+        }
+        return $roles;
     }
 
     /**

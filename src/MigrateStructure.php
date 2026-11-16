@@ -275,10 +275,11 @@ class MigrateStructure
     {
         $user = $mainRole = $mainRoleWithGrants->getName();
 
-        $mainRoleExists = count($this->destinationConnection->fetchAll(sprintf(
+        $mainRoles = $this->destinationConnection->fetchAll(sprintf(
             'SHOW ROLES LIKE %s',
             QueryBuilder::quote($mainRole),
-        ))) > 0;
+        ));
+        $mainRoleExists = count($mainRoles) > 0;
         if ($mainRoleExists) {
             $grantsToTargetUser = $this->destinationConnection->fetchAll(sprintf(
                 'SHOW GRANTS TO USER %s',
@@ -294,6 +295,15 @@ class MigrateStructure
                 throw new UserException('Main role exists but is not assigned to migrate user.');
             }
             if (!$this->isResumableRun()) {
+                return;
+            }
+            // Only a main role created by this tool on an earlier run is set up again.
+            if ($this->findRoleOwner($mainRoles, $mainRole) !== $this->config->getTargetSnowflakeRole()) {
+                $this->logger->info(sprintf(
+                    'Main role "%s" already exists and is not owned by "%s", its setup is skipped.',
+                    $mainRole,
+                    $this->config->getTargetSnowflakeRole(),
+                ));
                 return;
             }
         }
@@ -929,6 +939,19 @@ SQL;
     private function ifNotExists(): string
     {
         return $this->isResumableRun() ? 'IF NOT EXISTS ' : '';
+    }
+
+    /**
+     * @param array<array<string, string>> $roles rows of SHOW ROLES LIKE, which also match by wildcard and case
+     */
+    private function findRoleOwner(array $roles, string $roleName): ?string
+    {
+        foreach ($roles as $role) {
+            if ($role['name'] === $roleName) {
+                return $role['owner'];
+            }
+        }
+        return null;
     }
 
     private function databaseExistsOnTarget(string $database): bool
