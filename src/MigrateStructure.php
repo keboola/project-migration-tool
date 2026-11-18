@@ -347,20 +347,6 @@ class MigrateStructure
             }
         );
 
-        $sourceGrants = array_map(
-            fn(array $v) => GrantToRole::fromArray($v),
-            Helper::filterUserDollarGrants($this->sourceConnection->fetchAll(sprintf(
-                'SHOW GRANTS TO ROLE %s',
-                Helper::quoteIdentifier($this->sourceConnection->getCurrentRole()),
-            )))
-        );
-
-        $sourceGrants = array_filter(
-            $sourceGrants,
-            fn($v) => $v->getGrantedOn() === 'WAREHOUSE' && $v->getPrivilege() === 'USAGE'
-        );
-        assert(count($sourceGrants) > 0);
-
         foreach ($projectUsers as $projectUser) {
             $this->createUser($projectUser);
             $this->destinationConnection->assignGrantToRole($projectUser);
