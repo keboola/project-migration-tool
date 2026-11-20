@@ -36,6 +36,18 @@ class Helper
     }
 
     /**
+     * LIKE in SHOW commands ignores case and treats "_" and "%" as wildcards,
+     * so it can return objects with a different name.
+     *
+     * @param array<array<string, string>> $rows
+     * @return list<array<string, string>>
+     */
+    public static function filterRowsByExactName(array $rows, string $name): array
+    {
+        return array_values(array_filter($rows, fn(array $row): bool => ($row['name'] ?? null) === $name));
+    }
+
+    /**
      * @param GrantToRole[] $grants
      */
     public static function parseGrantsToObjects(array $grants, Config $config): RoleGrants

@@ -148,10 +148,10 @@ class Cleanup
         );
 
         // Check if target role has ownership of main role
-        $mainRole = $this->destinationConnection->fetchAll(sprintf(
+        $mainRole = Helper::filterRowsByExactName($this->destinationConnection->fetchAll(sprintf(
             'SHOW ROLES LIKE %s',
             QueryBuilder::quote($mainRoleName),
-        ));
+        )), $mainRoleName);
         $hasMainRoleOwnership = array_reduce(
             $mainRole,
             fn ($found, $v) => $found || $v['owner'] === $this->config->getTargetSnowflakeRole(),
@@ -173,20 +173,20 @@ class Cleanup
             $this->destinationConnection->useRole($this->config->getTargetSnowflakeRole());
 
             // Check if database exists
-            $dbExists = $this->destinationConnection->fetchAll(sprintf(
+            $dbExists = Helper::filterRowsByExactName($this->destinationConnection->fetchAll(sprintf(
                 'SHOW DATABASES LIKE %s;',
                 QueryBuilder::quote($database)
-            ));
+            )), $database);
 
             if (!$dbExists) {
                 $this->logger->info(sprintf('Database %s does not exist, checking for role with same name', $database));
                 // Check if role exists with exact or lowercase name
                 $roleName = null;
                 foreach ([$database, strtolower($database)] as $nameVariant) {
-                    $roleExists = $this->destinationConnection->fetchAll(sprintf(
+                    $roleExists = Helper::filterRowsByExactName($this->destinationConnection->fetchAll(sprintf(
                         'SHOW ROLES LIKE %s',
                         QueryBuilder::quote($nameVariant)
-                    ));
+                    )), $nameVariant);
                     if ($roleExists) {
                         $roleName = $nameVariant;
                         break;

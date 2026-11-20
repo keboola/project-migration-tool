@@ -67,6 +67,37 @@ class HelperTest extends TestCase
         );
     }
 
+    /**
+     * @param array<int, array<string, string>> $rows
+     * @param array<int, array<string, string>> $expectedRows
+     * @dataProvider showLikeRowsProvider
+     */
+    public function testFilterRowsByExactName(array $rows, array $expectedRows): void
+    {
+        self::assertSame($expectedRows, Helper::filterRowsByExactName($rows, 'SAPI_1234'));
+    }
+
+    public static function showLikeRowsProvider(): Generator
+    {
+        yield 'only exact row' => [
+            [['name' => 'SAPI_1234', 'owner' => 'A']],
+            [['name' => 'SAPI_1234', 'owner' => 'A']],
+        ];
+        yield 'different case is removed' => [
+            [['name' => 'sapi_1234', 'owner' => 'A'], ['name' => 'SAPI_1234', 'owner' => 'B']],
+            [['name' => 'SAPI_1234', 'owner' => 'B']],
+        ];
+        yield 'underscore wildcard match is removed' => [
+            [['name' => 'SAPIX1234', 'owner' => 'A'], ['name' => 'SAPI_1234', 'owner' => 'B']],
+            [['name' => 'SAPI_1234', 'owner' => 'B']],
+        ];
+        yield 'no exact match' => [
+            [['name' => 'SAPIX1234', 'owner' => 'A'], ['name' => 'Sapi_1234', 'owner' => 'B']],
+            [],
+        ];
+        yield 'no rows' => [[], []];
+    }
+
     public function testGenerateFormattedQuoteCombinationsKeepsQuotedPart(): void
     {
         self::assertSame(

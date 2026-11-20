@@ -43,11 +43,12 @@ class MetadataFetcher
         $uniqueMainRoles = array_unique($grantsOfRoles);
         assert(count($uniqueMainRoles) === 1);
 
-        $mainRoleResult = $this->sourceConnection->fetchAll(sprintf(
+        $mainRoleName = current($uniqueMainRoles);
+        $mainRoleResult = Helper::filterRowsByExactName($this->sourceConnection->fetchAll(sprintf(
             'SHOW ROLES LIKE %s',
-            QueryBuilder::quote(current($uniqueMainRoles))
-        ));
-        $mainRole = Role::fromArray(current($mainRoleResult));
+            QueryBuilder::quote($mainRoleName)
+        )), $mainRoleName);
+        $mainRole = Role::fromArray($mainRoleResult[0]);
 
         $grants = array_map(
             fn(array $v) => GrantToRole::fromArray($v),
@@ -68,9 +69,9 @@ class MetadataFetcher
         foreach ($this->config->getDatabases() as $database) {
             $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
 
-            $rolesResult = $this->sourceConnection->fetchAll(
+            $rolesResult = Helper::filterRowsByExactName($this->sourceConnection->fetchAll(
                 sprintf('SHOW ROLES LIKE %s', QueryBuilder::quote($databaseRole))
-            );
+            ), $databaseRole);
 
             $roles = [];
             foreach ($rolesResult as $roleResult) {
