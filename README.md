@@ -156,6 +156,9 @@ are not compared. Grants are compared the way the migration creates them:
   `credentials.target.warehouse`, as the migration does. The users' `default_warehouse` is not renamed,
   because the migration copies it as it is.
 - `granted_by = ACCOUNTADMIN` on the source is expected as the configured target role on the target.
+- Warehouse grants may be recorded on the target as granted by the configured target role instead of
+  the source grantor. The check accepts this when `granted_by` is the only difference. As a result,
+  revoking the warehouse from a project role on the target does not cascade to the grants that role made.
 - Account-level grants are compared without the account name, because it differs between accounts.
 - Grants on the `<DB>_SHARE` and `<DB>_OLD` databases are skipped on both accounts.
 - Grants of roles to the configured migration user (`credentials.source.username` on the source account,

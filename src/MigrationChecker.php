@@ -83,6 +83,8 @@ class MigrationChecker
     /** @var string[] */
     private array $temporaryDatabases = [];
 
+    private int $acceptedWarehouseGrantsByMigrationRole = 0;
+
     public function __construct(
         readonly Snowflake\Connection $sourceConnection,
         readonly Snowflake\Connection $destinationConnection,
@@ -99,6 +101,7 @@ class MigrationChecker
         $this->usersToCheck = [];
         $this->excludedMigrationUserGrants = [self::SOURCE => 0, self::TARGET => 0];
         $this->excludedTemporaryDatabaseGrants = [self::SOURCE => 0, self::TARGET => 0];
+        $this->acceptedWarehouseGrantsByMigrationRole = 0;
         $this->temporaryDatabases = [];
         foreach ($this->databases as $database) {
             $this->temporaryDatabases[] = $database . '_SHARE';
@@ -300,28 +303,22 @@ class MigrationChecker
 
         $sourceGrants = $this->fetchGrantsToRole($this->sourceConnection, $this->sourceRoles, $role);
         $targetGrants = $this->fetchGrantsToRole($this->destinationConnection, $this->targetRoles, $role);
-        $this->comparison->compareItems(
-            StructureComparison::GROUP_GRANTS_TO_ROLES,
+        $comparedTargetGrants = array_map(
+            fn(array $grant) => $this->withoutAccountName($grant),
+            $this->withoutTemporaryDatabaseGrants($targetGrants, self::TARGET),
+        );
+        $comparedSourceGrants = $this->withWarehouseGrantsByMigrationRole(
             array_map(
                 fn(array $grant) => $this->withoutAccountName($this->asMigratedGrant($grant)),
                 $this->withoutTemporaryDatabaseGrants($sourceGrants, self::SOURCE),
             ),
-            array_map(
-                fn(array $grant) => $this->withoutAccountName($grant),
-                $this->withoutTemporaryDatabaseGrants($targetGrants, self::TARGET),
-            ),
-            fn(array $grant) => implode(' ', array_filter(
-                [
-                    $grant['privilege'],
-                    'ON',
-                    $grant['granted_on'],
-                    $grant['name'],
-                    'TO',
-                    $grant['granted_to'],
-                    $grant['grantee_name'],
-                ],
-                fn($value) => $value !== '',
-            )),
+            $comparedTargetGrants,
+        );
+        $this->comparison->compareItems(
+            StructureComparison::GROUP_GRANTS_TO_ROLES,
+            $comparedSourceGrants,
+            $comparedTargetGrants,
+            fn(array $grant) => $this->getGrantToRoleItemName($grant),
             self::GRANT_TO_ROLE_FIELDS,
         );
 
@@ -360,6 +357,64 @@ class MigrationChecker
                 $this->checkRoleWithChildRoles((string) $grant['name']);
             }
         }
+    }
+
+    /**
+     * @param Row $grant
+     */
+    private function getGrantToRoleItemName(array $grant): string
+    {
+        return implode(' ', array_filter(
+            [
+                $grant['privilege'],
+                'ON',
+                $grant['granted_on'],
+                $grant['name'],
+                'TO',
+                $grant['granted_to'],
+                $grant['grantee_name'],
+            ],
+            fn($value) => $value !== '',
+        ));
+    }
+
+    /**
+     * The migration grants as the source grantor, but on the target Snowflake records some warehouse grants
+     * as granted by the configured target role. Probable cause: the migration user has
+     * DEFAULT_SECONDARY_ROLES = ALL and the target role owns the warehouse. The access is the same,
+     * so a warehouse grant that differs only in "granted_by" is accepted.
+     *
+     * @param array<int, Row> $sourceGrants
+     * @param array<int, Row> $targetGrants
+     * @return array<int, Row>
+     */
+    private function withWarehouseGrantsByMigrationRole(array $sourceGrants, array $targetGrants): array
+    {
+        $migrationRole = $this->config->getTargetSnowflakeRole();
+        $targetGrantsByName = [];
+        foreach ($targetGrants as $grant) {
+            $targetGrantsByName[$this->getGrantToRoleItemName($grant)] = $grant;
+        }
+
+        foreach ($sourceGrants as $index => $grant) {
+            $targetGrant = $targetGrantsByName[$this->getGrantToRoleItemName($grant)] ?? null;
+            if ($grant['granted_on'] !== 'WAREHOUSE'
+                || $grant['granted_by'] === $migrationRole
+                || $targetGrant === null
+                || $targetGrant['granted_by'] !== $migrationRole
+            ) {
+                continue;
+            }
+            $acceptedGrant = ['granted_by' => $migrationRole] + $grant;
+            foreach (self::GRANT_TO_ROLE_FIELDS as $field) {
+                if (($acceptedGrant[$field] ?? null) !== ($targetGrant[$field] ?? null)) {
+                    continue 2;
+                }
+            }
+            $sourceGrants[$index] = $acceptedGrant;
+            $this->acceptedWarehouseGrantsByMigrationRole++;
+        }
+        return $sourceGrants;
     }
 
     /**
@@ -680,6 +735,12 @@ class MigrationChecker
                 $account,
             ));
         }
+        $this->logger->info(sprintf(
+            'Accepted %d warehouse grants recorded on the target as granted by the migration role "%s"'
+            . ' instead of the source grantor.',
+            $this->acceptedWarehouseGrantsByMigrationRole,
+            $this->config->getTargetSnowflakeRole(),
+        ));
 
         $differences = $this->comparison->getDifferences();
         if (!$differences) {

@@ -266,6 +266,42 @@ class MigrationCheckerTest extends TestCase
             },
             'Post-migration check passed.',
         ];
+        yield 'warehouse grant recorded as granted by the migration role on the target' => [
+            function (FakeSnowflakeAccount $source, FakeSnowflakeAccount $target): void {
+                $source->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1',
+                );
+                $source->grantsToRole['KEBOOLA_1_RO'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1_RO',
+                    'false',
+                    'KEBOOLA_1',
+                );
+                $target->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1',
+                    'false',
+                    'TARGET_MAIN_MIGRATE',
+                );
+                $target->grantsToRole['KEBOOLA_1_RO'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1_RO',
+                    'false',
+                    'TARGET_MAIN_MIGRATE',
+                );
+            },
+            'Accepted 2 warehouse grants recorded on the target as granted by the migration role '
+                . '"TARGET_MAIN_MIGRATE" instead of the source grantor.',
+        ];
     }
 
     /**
@@ -379,6 +415,61 @@ class MigrationCheckerTest extends TestCase
             },
             'Grants to roles "SELECT ON TABLE DB1.S1.T1 TO ROLE KEBOOLA_1_RO": '
                 . 'granted_by: KEBOOLA_STORAGE -> ACCOUNTADMIN',
+        ];
+        yield 'warehouse grant granted by another role on the target' => [
+            function (FakeSnowflakeAccount $source, FakeSnowflakeAccount $target): void {
+                $source->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1',
+                );
+                $target->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1',
+                    'false',
+                    'SYSADMIN',
+                );
+            },
+            'Grants to roles "USAGE ON WAREHOUSE WH TO ROLE KEBOOLA_1": granted_by: KEBOOLA_STORAGE -> SYSADMIN',
+        ];
+        yield 'non-warehouse grant granted by the migration role on the target' => [
+            function (FakeSnowflakeAccount $source, FakeSnowflakeAccount $target): void {
+                $target->grantsToRole['KEBOOLA_1_RO'] = [
+                    FakeSnowflakeAccount::grantToRole(
+                        'SELECT',
+                        'TABLE',
+                        'DB1.S1.T1',
+                        'KEBOOLA_1_RO',
+                        'false',
+                        'TARGET_MAIN_MIGRATE',
+                    ),
+                ];
+            },
+            'Grants to roles "SELECT ON TABLE DB1.S1.T1 TO ROLE KEBOOLA_1_RO": '
+                . 'granted_by: KEBOOLA_STORAGE -> TARGET_MAIN_MIGRATE',
+        ];
+        yield 'warehouse grant granted by the migration role with a different grant option' => [
+            function (FakeSnowflakeAccount $source, FakeSnowflakeAccount $target): void {
+                $source->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1',
+                );
+                $target->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1',
+                    'true',
+                    'TARGET_MAIN_MIGRATE',
+                );
+            },
+            'Grants to roles "USAGE ON WAREHOUSE WH TO ROLE KEBOOLA_1": '
+                . 'grant_option: false -> true, granted_by: KEBOOLA_STORAGE -> TARGET_MAIN_MIGRATE',
         ];
     }
 
