@@ -327,7 +327,7 @@ class Cleanup
             ))
         );
 
-        foreach (array_reverse($userRoles) as $userRole) {
+        foreach (Helper::orderUserGrantsForRevoke($userRoles) as $userRole) {
             if ($userRole->getRole() === $this->config->getTargetSnowflakeRole()) {
                 continue;
             }

@@ -7,9 +7,82 @@ namespace ProjectMigrationTool\Tests\Snowflake;
 use Generator;
 use PHPUnit\Framework\TestCase;
 use ProjectMigrationTool\Snowflake\Helper;
+use ProjectMigrationTool\ValueObject\GrantToUser;
 
 class HelperTest extends TestCase
 {
+    /**
+     * @param array<string, string> $grantedByOfRole role => granted_by, in SHOW GRANTS TO USER order
+     * @param string[] $expectedRoles
+     * @dataProvider userGrantsProvider
+     */
+    public function testOrderUserGrantsForRevoke(array $grantedByOfRole, array $expectedRoles): void
+    {
+        $grants = [];
+        foreach ($grantedByOfRole as $role => $grantedBy) {
+            $grants[] = GrantToUser::fromArray([
+                'role' => (string) $role,
+                'granted_to' => 'USER',
+                'grantee_name' => 'MIGRATE',
+                'granted_by' => $grantedBy,
+            ]);
+        }
+
+        $orderedRoles = array_map(
+            fn(GrantToUser $grant) => $grant->getRole(),
+            Helper::orderUserGrantsForRevoke($grants),
+        );
+
+        self::assertSame($expectedRoles, $orderedRoles);
+    }
+
+    public static function userGrantsProvider(): Generator
+    {
+        yield 'grantor sorts after the roles it granted' => [
+            [
+                'MIGRATE_TARGET' => '',
+                'MIRO_1' => 'MIRO_STORAGE',
+                'MIRO_1_RO' => 'MIRO_1',
+                'MIRO_STORAGE' => 'MIGRATE_TARGET',
+                'MIRO_WORKSPACE_1' => 'MIRO_1',
+            ],
+            ['MIRO_WORKSPACE_1', 'MIRO_1_RO', 'MIRO_1', 'MIRO_STORAGE', 'MIGRATE_TARGET'],
+        ];
+        yield 'grantor already sorts after the roles it granted' => [
+            [
+                'KEBOOLA_STORAGE' => 'MIGRATE_TARGET',
+                'MIGRATE_TARGET' => '',
+                'SAPI_123' => 'KEBOOLA_STORAGE',
+                'SAPI_123_RO' => 'SAPI_123',
+            ],
+            ['SAPI_123_RO', 'SAPI_123', 'KEBOOLA_STORAGE', 'MIGRATE_TARGET'],
+        ];
+        yield 'three-level chain' => [
+            [
+                'A_LOW' => 'B_MID',
+                'B_MID' => 'C_TOP',
+                'C_TOP' => 'MIGRATE_TARGET',
+            ],
+            ['A_LOW', 'B_MID', 'C_TOP'],
+        ];
+        yield 'grantor not in the list keeps the reverse order' => [
+            [
+                'A_ROLE' => 'ACCOUNTADMIN',
+                'B_ROLE' => 'OTHER_ROLE',
+                'C_ROLE' => '',
+            ],
+            ['C_ROLE', 'B_ROLE', 'A_ROLE'],
+        ];
+        yield 'cycle falls back to the remaining order' => [
+            [
+                'A_ROLE' => 'B_ROLE',
+                'B_ROLE' => 'A_ROLE',
+                'C_ROLE' => 'A_ROLE',
+            ],
+            ['C_ROLE', 'B_ROLE', 'A_ROLE'],
+        ];
+    }
+
     /**
      * @param string[] $parts
      * @dataProvider partsProvider
