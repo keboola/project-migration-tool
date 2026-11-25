@@ -27,10 +27,21 @@ GRANT USAGE ON WAREHOUSE MIGRATE_LARGE TO ROLE SOURCE_MAIN_MIGRATE;
 
 ### If you migrate to a different region
 
-ACCOUNTADMIN is required for replication to a different region. 
+ACCOUNTADMIN is not required. The tool runs under the configured source role, so create the role as for
+the same region and add the replication grants from [Deployment prerequisites](#cross-region-replication)
+below:
 
 ```sql
-CREATE USER "MIGRATE" PASSWORD='MIGRATE_PASSWORD' DEFAULT_ROLE='SOURCE_MAIN_MIGRATE';
+-- all grants from "If you migrate to the same region", then:
+GRANT CREATE REPLICATION GROUP ON ACCOUNT TO ROLE SOURCE_MAIN_MIGRATE;
+-- for each database in migrateDatabases:
+GRANT MONITOR ON DATABASE <database_name> TO ROLE SOURCE_MAIN_MIGRATE;
+```
+
+The simple alternative is to use `ACCOUNTADMIN` as the source role:
+
+```sql
+CREATE USER "MIGRATE" PASSWORD='MIGRATE_PASSWORD' DEFAULT_ROLE='ACCOUNTADMIN';
 GRANT ROLE "ACCOUNTADMIN" TO USER "MIGRATE";
 ```
 
@@ -51,23 +62,54 @@ databases, the cleanup also drops those replica databases on the migrate account
 names are freed and they stop consuming storage. Same-region migrations do not use a
 replication group, so creation and teardown are no-ops.
 
+The cleanup also revokes roles from the target migration user (`credentials.target.username`), but only
+the roles of the databases in `migrateDatabases`: the owner role of each database and the roles granted
+to the user by these roles. Roles of other projects stay, so other projects can still be migrated with the
+same user on the same target account. The shared main role (for example `KEBOOLA_STORAGE`) is revoked only
+when no other project role depends on it. The kept roles are listed in the job log.
+
 **Deployment prerequisites**
 
-The tool runs the replication-group statements under the configured roles (not
-`ACCOUNTADMIN`), so those roles must hold the `CREATE REPLICATION GROUP` privilege. Grant it
-(as `ACCOUNTADMIN`) on **both** accounts — on the source account to the configured source
-role, and on the migrate account to the configured migrate role:
+The tool runs all statements under the configured roles, so `ACCOUNTADMIN` is not required.
+A cross-region run on real accounts passed with these grants (run them as `ACCOUNTADMIN`):
 
 ```sql
--- On the SOURCE account (creates the primary replication group):
+-- On the SOURCE account (creates the primary replication group),
+-- in addition to the grants for the same region:
 GRANT CREATE REPLICATION GROUP ON ACCOUNT TO ROLE <source_role>;
+GRANT CREATE SHARE ON ACCOUNT TO ROLE <source_role>;
+GRANT MANAGE GRANTS ON ACCOUNT TO ROLE <source_role>;
+-- for each database in migrateDatabases:
+GRANT MONITOR ON DATABASE <database_name> TO ROLE <source_role>;
 
--- On the MIGRATE account (creates the secondary/replica replication group):
+-- On the MIGRATE account (creates the replica replication group and the shares):
 GRANT CREATE REPLICATION GROUP ON ACCOUNT TO ROLE <migrate_role>;
+GRANT CREATE SHARE ON ACCOUNT TO ROLE <migrate_role>;
+GRANT MANAGE SHARE TARGET ON ACCOUNT TO ROLE <migrate_role>;
+GRANT CREATE WAREHOUSE ON ACCOUNT TO ROLE <migrate_role>;
+-- or, instead of CREATE WAREHOUSE, an existing warehouse with the lowercase name "migrate":
+-- GRANT USAGE ON WAREHOUSE "migrate" TO ROLE <migrate_role>;
 ```
 
-Without these grants the run fails with `Insufficient privileges to operate on account ...
-must have CREATE REPLICATION GROUP granted on ACCOUNT`.
+The simple alternative is to use `ACCOUNTADMIN` as the source and migrate role.
+
+Errors when a grant is missing:
+
+- no `CREATE REPLICATION GROUP`: `Insufficient privileges to operate on account ... must have
+  CREATE REPLICATION GROUP granted on ACCOUNT`
+- no privilege on a migrated database: `Insufficient privileges to operate on database '<db>'.
+  Your primary role ... must have USAGE or any other privilege granted on DATABASE <db>`.
+  `MONITOR` on the database is enough.
+
+Errors that the tool retries:
+
+- `Replication group '<org>.<account>.MIGRATION_RG_...' does not exist or is not authorized` when the
+  replica group is created on the migrate account. A new primary group can take a few minutes to become
+  visible on another account. The tool tries again up to 10 times, 15 seconds apart. If it still fails,
+  check that the migrate account is enabled for replication with the source account.
+- `Replication group 'MIGRATION_RG_...' is currently a primary replication group in a replication
+  relationship and cannot be dropped` when the cleanup drops the group on the source account. The source
+  account can still see the replica that was just dropped. The tool tries again in the same way.
 
 Replication groups authorize accounts by their **organization account identifier**
 (`<organization_name>.<account_name>`), not by the legacy `<region>.<account_locator>` form.
@@ -93,9 +135,24 @@ Tunable parameters (optional):
 - `replicationRefreshPollInterval` (seconds, default `30`) — wait between progress polls.
 
 ## On Migrate Snowflake account (only if you migrate to a different region)
-    
+
+Create a role with the grants for the migrate account from
+[Deployment prerequisites](#cross-region-replication):
+
 ```sql
-CREATE USER "MIGRATE" PASSWORD='MIGRATE_PASSWORD' DEFAULT_ROLE='SOURCE_MAIN_MIGRATE';
+CREATE ROLE MIGRATE_MAIN_MIGRATE;
+CREATE USER "MIGRATE" PASSWORD='MIGRATE_PASSWORD' DEFAULT_ROLE='MIGRATE_MAIN_MIGRATE';
+GRANT ROLE "MIGRATE_MAIN_MIGRATE" TO USER "MIGRATE";
+GRANT CREATE REPLICATION GROUP ON ACCOUNT TO ROLE MIGRATE_MAIN_MIGRATE;
+GRANT CREATE SHARE ON ACCOUNT TO ROLE MIGRATE_MAIN_MIGRATE;
+GRANT MANAGE SHARE TARGET ON ACCOUNT TO ROLE MIGRATE_MAIN_MIGRATE;
+GRANT CREATE WAREHOUSE ON ACCOUNT TO ROLE MIGRATE_MAIN_MIGRATE;
+```
+
+The simple alternative is `ACCOUNTADMIN`:
+
+```sql
+CREATE USER "MIGRATE" PASSWORD='MIGRATE_PASSWORD' DEFAULT_ROLE='ACCOUNTADMIN';
 GRANT ROLE "ACCOUNTADMIN" TO USER "MIGRATE";
 ```
 
@@ -132,9 +189,9 @@ You do not need to wait for `SNOWFLAKE.ACCOUNT_USAGE` to catch up, and no wareho
 row counts and the check fails.
 
 The schemas, tables and views of each database are listed with the database owner role on both accounts.
-Before `runCleanup` the migration users already have this role. After `runCleanup` the target user has
-only the configured target role, so the check grants the database role to the user and revokes it at the
-end. If the configured role cannot grant it, the job fails with an error that says so.
+Before `runCleanup` the migration users already have this role. After `runCleanup` the target user no
+longer has the roles of the migrated databases, so the check grants the database role to the user and
+revokes it at the end. If the configured role cannot grant it, the job fails with an error that says so.
 
 For each database in `migrateDatabases` the check compares:
 
