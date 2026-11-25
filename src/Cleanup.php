@@ -11,6 +11,7 @@ use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Snowflake\Connection;
 use ProjectMigrationTool\Snowflake\Helper;
 use ProjectMigrationTool\Snowflake\ReplicationGroup;
+use ProjectMigrationTool\Snowflake\Retry;
 use ProjectMigrationTool\ValueObject\FutureGrantToRole;
 use ProjectMigrationTool\ValueObject\GrantToRole;
 use ProjectMigrationTool\ValueObject\GrantToUser;
@@ -31,7 +32,10 @@ class Cleanup
     ) {
     }
 
-    public function teardownReplication(): void
+    /**
+     * @param ?callable(int):mixed $sleeper
+     */
+    public function teardownReplication(?callable $sleeper = null): void
     {
         if ($this->sourceConnection->getRegion() === $this->destinationConnection->getRegion()) {
             // Same-region migration never created a replication group; nothing to tear down.
@@ -58,8 +62,19 @@ class Cleanup
             ));
         }
 
+        // The source account can still see the dropped replica for a while.
         $this->logger->info(sprintf('Dropping replication group "%s" on source account.', $groupName));
-        $this->sourceConnection->query(ReplicationGroup::dropSql($groupName));
+        $sourceConnection = $this->sourceConnection;
+        Retry::whileErrorContains(
+            'is currently a primary replication group in a replication relationship',
+            fn() => $sourceConnection->query(ReplicationGroup::dropSql($groupName)),
+            sleeper: $sleeper ?? fn(int $seconds): int => sleep($seconds),
+            logger: $this->logger,
+            retryMessage: sprintf(
+                'Replication group "%s" is still a primary of a replica on the source account.',
+                $groupName,
+            ),
+        );
     }
 
     public function sourceAccount(): void
