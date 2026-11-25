@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ProjectMigrationTool\Tests;
 
+use Generator;
 use Keboola\SnowflakeDbAdapter\Exception\RuntimeException;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
@@ -88,6 +89,147 @@ class CleanupTest extends TestCase
     }
 
     /**
+     * @param array<string, string> $databaseOwners database => owner role, as SHOW DATABASES on the target
+     * @param array<string, string> $userRoles role => granted_by, in SHOW GRANTS TO USER order
+     * @param string[] $expectedQueries
+     * @param string[] $expectedInfo
+     * @dataProvider postMigrationProvider
+     */
+    public function testPostMigrationRevokesOnlyRolesOfMigratedDatabases(
+        array $databaseOwners,
+        array $userRoles,
+        array $expectedQueries,
+        array $expectedInfo,
+    ): void {
+        $queries = [];
+        $destination = $this->createConnectionMock();
+        $destination->expects(self::atLeastOnce())
+            ->method('fetchAll')
+            ->willReturnCallback(fn(string $sql): array => match ($sql) {
+                'SHOW DATABASES;' => array_map(
+                    fn(string $name, string $owner) => ['name' => $name, 'owner' => $owner],
+                    array_keys($databaseOwners),
+                    $databaseOwners,
+                ),
+                'SHOW GRANTS TO USER "MIGRATE_TARGET_USER"' => array_map(
+                    fn(string $role, string $grantedBy) => [
+                        'role' => $role,
+                        'granted_to' => 'USER',
+                        'grantee_name' => self::TARGET_USER,
+                        'granted_by' => $grantedBy,
+                    ],
+                    array_keys($userRoles),
+                    $userRoles,
+                ),
+                default => self::fail('Unexpected fetch: ' . $sql),
+            });
+        $destination->expects(self::any())
+            ->method('query')
+            ->willReturnCallback(function (string $sql) use (&$queries): void {
+                $queries[] = $sql;
+            });
+
+        $source = $this->createConnectionMock();
+        $source->expects(self::never())->method('query');
+        $source->expects(self::never())->method('fetchAll');
+
+        $cleanup = new Cleanup(
+            $this->createConfig(['KEBOOLA_1', 'KEBOOLA_2']),
+            $source,
+            $destination,
+            $this->logger,
+        );
+        $cleanup->postMigration();
+
+        self::assertSame($expectedQueries, $queries);
+        foreach ($expectedInfo as $message) {
+            self::assertTrue($this->logger->hasInfoThatContains($message), 'Missing info: ' . $message);
+        }
+        self::assertFalse($this->logger->hasInfoThatContains('Warning'));
+    }
+
+    public static function postMigrationProvider(): Generator
+    {
+        $migratedProjects = [
+            'MIGRATE_TARGET' => '',
+            'KEBOOLA_STORAGE' => 'MIGRATE_TARGET',
+            'KEBOOLA_1' => 'KEBOOLA_STORAGE',
+            'KEBOOLA_1_RO' => 'KEBOOLA_1',
+            'KEBOOLA_WORKSPACE_1' => 'KEBOOLA_1',
+            'SAPI_2' => 'KEBOOLA_STORAGE',
+            'SAPI_2_RO' => 'SAPI_2',
+        ];
+        $revokeMigratedProjects = [
+            'USE ROLE "SAPI_2";',
+            'REVOKE ROLE "SAPI_2_RO" FROM USER "MIGRATE_TARGET_USER"',
+            'USE ROLE "KEBOOLA_STORAGE";',
+            'REVOKE ROLE "SAPI_2" FROM USER "MIGRATE_TARGET_USER"',
+            'USE ROLE "KEBOOLA_1";',
+            'REVOKE ROLE "KEBOOLA_WORKSPACE_1" FROM USER "MIGRATE_TARGET_USER"',
+            'REVOKE ROLE "KEBOOLA_1_RO" FROM USER "MIGRATE_TARGET_USER"',
+            'USE ROLE "KEBOOLA_STORAGE";',
+            'REVOKE ROLE "KEBOOLA_1" FROM USER "MIGRATE_TARGET_USER"',
+        ];
+
+        yield 'no other project in progress' => [
+            'databaseOwners' => ['KEBOOLA_1' => 'KEBOOLA_1', 'KEBOOLA_2' => 'SAPI_2'],
+            'userRoles' => $migratedProjects,
+            'expectedQueries' => [
+                ...$revokeMigratedProjects,
+                'USE ROLE "MIGRATE_TARGET";',
+                'REVOKE ROLE "KEBOOLA_STORAGE" FROM USER "MIGRATE_TARGET_USER"',
+            ],
+            'expectedInfo' => [],
+        ];
+
+        yield 'other project in progress keeps its roles and the main role' => [
+            'databaseOwners' => ['KEBOOLA_1' => 'KEBOOLA_1', 'KEBOOLA_2' => 'SAPI_2', 'KEBOOLA_9' => 'KEBOOLA_9'],
+            'userRoles' => $migratedProjects + [
+                'KEBOOLA_9' => 'KEBOOLA_STORAGE',
+                'KEBOOLA_9_RO' => 'KEBOOLA_9',
+            ],
+            'expectedQueries' => $revokeMigratedProjects,
+            'expectedInfo' => [
+                'Keeping roles of other projects on user "MIGRATE_TARGET_USER": KEBOOLA_9, KEBOOLA_9_RO.',
+                'Keeping main role "KEBOOLA_STORAGE" on user "MIGRATE_TARGET_USER", '
+                . 'because roles of other projects depend on it: KEBOOLA_9, KEBOOLA_9_RO.',
+            ],
+        ];
+
+        yield 'role of unknown origin is kept' => [
+            'databaseOwners' => ['KEBOOLA_1' => 'KEBOOLA_1', 'KEBOOLA_2' => 'SAPI_2'],
+            'userRoles' => $migratedProjects + ['SOME_ADMIN_ROLE' => ''],
+            'expectedQueries' => [
+                ...$revokeMigratedProjects,
+                'USE ROLE "MIGRATE_TARGET";',
+                'REVOKE ROLE "KEBOOLA_STORAGE" FROM USER "MIGRATE_TARGET_USER"',
+            ],
+            'expectedInfo' => [
+                'Keeping roles of other projects on user "MIGRATE_TARGET_USER": SOME_ADMIN_ROLE.',
+            ],
+        ];
+
+        yield 'database without known owner keeps its roles and the main role' => [
+            'databaseOwners' => ['KEBOOLA_1' => 'KEBOOLA_1'],
+            'userRoles' => $migratedProjects,
+            'expectedQueries' => [
+                'USE ROLE "KEBOOLA_1";',
+                'REVOKE ROLE "KEBOOLA_WORKSPACE_1" FROM USER "MIGRATE_TARGET_USER"',
+                'REVOKE ROLE "KEBOOLA_1_RO" FROM USER "MIGRATE_TARGET_USER"',
+                'USE ROLE "KEBOOLA_STORAGE";',
+                'REVOKE ROLE "KEBOOLA_1" FROM USER "MIGRATE_TARGET_USER"',
+            ],
+            'expectedInfo' => [
+                'The owner role of database "KEBOOLA_2" was not found on the target account, '
+                . 'its roles are kept on user "MIGRATE_TARGET_USER".',
+                'Keeping roles of other projects on user "MIGRATE_TARGET_USER": SAPI_2, SAPI_2_RO.',
+                'Keeping main role "KEBOOLA_STORAGE" on user "MIGRATE_TARGET_USER", '
+                . 'because roles of other projects depend on it: SAPI_2, SAPI_2_RO.',
+            ],
+        ];
+    }
+
+    /**
      * @param callable(string):void $sourceQuery
      */
     private function createCrossRegionCleanup(callable $sourceQuery): Cleanup
@@ -116,11 +258,22 @@ class CleanupTest extends TestCase
         return new Cleanup($this->createConfig(), $source, $destination, $this->logger, $migrate);
     }
 
-    private function createConfig(): Config
+    private function createConnectionMock(): Connection&MockObject
+    {
+        return $this->getMockBuilder(Connection::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['query', 'fetchAll'])
+            ->getMock();
+    }
+
+    /**
+     * @param string[] $databases
+     */
+    private function createConfig(array $databases = [self::DATABASE]): Config
     {
         return new Config(['parameters' => [
             'action' => Config::ACTION_CLEANUP,
-            'migrateDatabases' => [self::DATABASE],
+            'migrateDatabases' => $databases,
             'credentials' => [
                 'source' => [
                     'host' => 'source.snowflakecomputing.com',
@@ -140,10 +293,7 @@ class CleanupTest extends TestCase
 
     private function createConnection(?string $region): Connection&MockObject
     {
-        $connection = $this->getMockBuilder(Connection::class)
-            ->disableOriginalConstructor()
-            ->onlyMethods(['query', 'fetchAll'])
-            ->getMock();
+        $connection = $this->createConnectionMock();
         $connection->expects($region === null ? self::never() : self::atLeastOnce())
             ->method('fetchAll')
             ->willReturnCallback(fn(string $sql): array => match ($sql) {
