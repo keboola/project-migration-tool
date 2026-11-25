@@ -52,7 +52,7 @@ class PrepareMigrationTest extends TestCase
         self::assertSame([15, 15], $this->sleeps);
         self::assertTrue($this->logger->hasInfoThatContains(sprintf(
             'Primary replication group "%s" is not visible on the migrate account yet. '
-            . 'Retrying in 15 seconds (attempt 2 of 10).',
+            . 'Retrying in 15 seconds (attempt 2 of 20).',
             $this->groupName(),
         )));
         self::assertContains(ReplicationGroup::refreshSql($this->groupName()), $this->migrateQueries);
@@ -76,7 +76,7 @@ class PrepareMigrationTest extends TestCase
                 $e->getMessage(),
             );
         }
-        self::assertCount(9, $this->sleeps);
+        self::assertCount(19, $this->sleeps);
         self::assertNotContains(ReplicationGroup::refreshSql($this->groupName()), $this->migrateQueries);
     }
 

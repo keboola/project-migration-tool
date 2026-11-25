@@ -105,7 +105,7 @@ Errors that the tool retries:
 
 - `Replication group '<org>.<account>.MIGRATION_RG_...' does not exist or is not authorized` when the
   replica group is created on the migrate account. A new primary group can take a few minutes to become
-  visible on another account. The tool tries again up to 10 times, 15 seconds apart. If it still fails,
+  visible on another account. The tool makes up to 20 attempts, 15 seconds apart (about 5 minutes). If it still fails,
   check that the migrate account is enabled for replication with the source account.
 - `Replication group 'MIGRATION_RG_...' is currently a primary replication group in a replication
   relationship and cannot be dropped` when the cleanup drops the group on the source account. The source

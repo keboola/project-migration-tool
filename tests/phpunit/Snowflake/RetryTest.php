@@ -61,8 +61,8 @@ class RetryTest extends TestCase
         self::assertSame([15, 15], $sleeps);
         self::assertSame(
             [
-                'Group is not visible yet. Retrying in 15 seconds (attempt 2 of 10).',
-                'Group is not visible yet. Retrying in 15 seconds (attempt 3 of 10).',
+                'Group is not visible yet. Retrying in 15 seconds (attempt 2 of 20).',
+                'Group is not visible yet. Retrying in 15 seconds (attempt 3 of 20).',
             ],
             array_column($logger->records, 'message'),
         );

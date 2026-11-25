@@ -10,7 +10,7 @@ use Throwable;
 
 class Retry
 {
-    public const DEFAULT_MAX_ATTEMPTS = 10;
+    public const DEFAULT_MAX_ATTEMPTS = 20;
 
     public const DEFAULT_DELAY_SECONDS = 15;
 

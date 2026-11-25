@@ -51,7 +51,7 @@ class CleanupTest extends TestCase
         self::assertSame([15, 15], $this->sleeps);
         self::assertTrue($this->logger->hasInfoThatContains(sprintf(
             'Replication group "%s" is still a primary of a replica on the source account. '
-            . 'Retrying in 15 seconds (attempt 2 of 10).',
+            . 'Retrying in 15 seconds (attempt 2 of 20).',
             $this->groupName(),
         )));
     }
@@ -68,8 +68,8 @@ class CleanupTest extends TestCase
         } catch (RuntimeException $e) {
             self::assertSame(self::STILL_PRIMARY_ERROR, $e->getMessage());
         }
-        self::assertCount(10, $this->sourceQueries);
-        self::assertCount(9, $this->sleeps);
+        self::assertCount(20, $this->sourceQueries);
+        self::assertCount(19, $this->sleeps);
     }
 
     public function testTeardownReplicationDoesNotRetryOtherErrors(): void
