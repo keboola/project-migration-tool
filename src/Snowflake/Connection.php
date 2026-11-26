@@ -24,6 +24,10 @@ class Connection extends AdapterConnection
 
     private ?string $actualRole = null;
 
+    private ?string $actualWarehouse = null;
+
+    private ?string $warehouseRole = null;
+
     private string $defaultRole;
 
     private ?LoggerInterface $logger;
@@ -62,12 +66,15 @@ class Connection extends AdapterConnection
 
     /**
      * Raw statements (for example the "USE ROLE" list in Cleanup) bypass useRole(),
-     * so the tracked role is forgotten before they run, even if they then fail.
+     * so the tracked role and warehouse are forgotten before they run, even if they then fail.
      */
     private function forgetSessionStateChangedBy(string $sql): void
     {
         if (preg_match('/^\s*(USE\s+(SECONDARY\s+)?ROLES?|REVOKE|DROP\s+ROLE)\b/i', $sql) === 1) {
             $this->actualRole = null;
+        }
+        if (preg_match('/^\s*(USE|ALTER|DROP)\s+WAREHOUSE\b/i', $sql) === 1) {
+            $this->actualWarehouse = null;
         }
     }
 
@@ -84,12 +91,26 @@ class Connection extends AdapterConnection
         $this->actualRole = $roleName;
     }
 
-    public function useWarehouse(string $warehouse): void
+    /**
+     * USE ROLE keeps the session warehouse, but the warehouse is set again after a role change,
+     * so a role without USAGE on it still fails here as before.
+     */
+    public function useWarehouse(string $warehouse, bool $forceUse = false): void
     {
+        if (!$forceUse
+            && $warehouse === $this->actualWarehouse
+            && $this->actualRole !== null
+            && $this->actualRole === $this->warehouseRole
+        ) {
+            return;
+        }
         $this->query(sprintf(
             'USE WAREHOUSE %s;',
             Helper::quoteIdentifier($warehouse)
         ));
+
+        $this->actualWarehouse = $warehouse;
+        $this->warehouseRole = $this->actualRole;
     }
 
     public function getRegion(): string

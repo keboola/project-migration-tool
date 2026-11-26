@@ -14,6 +14,9 @@ use ReflectionProperty;
 
 class ConnectionTest extends TestCase
 {
+    /** @var list<string> */
+    private array $queries = [];
+
     /**
      * @dataProvider nonDropStatementProvider
      */
@@ -154,6 +157,88 @@ class ConnectionTest extends TestCase
         $this->expectExceptionMessage('Run DROP query on ACCOUNTADMIN role is not allowed.');
 
         $connection->assertQueryIsAllowed('DROP TABLE x');
+    }
+
+    public function testSameWarehouseWithSameRoleIsUsedOnce(): void
+    {
+        $connection = $this->createConnectionLoggingQueries();
+
+        $connection->useRole('OWNER');
+        $connection->useWarehouse('WH');
+        $connection->useWarehouse('WH');
+
+        self::assertSame(['USE ROLE "OWNER";', 'USE WAREHOUSE "WH";'], $this->queries);
+    }
+
+    public function testWarehouseIsUsedAgainWhenAnythingChanged(): void
+    {
+        $connection = $this->createConnectionLoggingQueries();
+
+        $connection->useWarehouse('WH');
+        $connection->useWarehouse('WH');
+        $connection->useRole('OWNER');
+        $connection->useWarehouse('WH');
+        $connection->useWarehouse('OTHER_WH');
+        $connection->useWarehouse('OTHER_WH', true);
+        $connection->useRole('OTHER_OWNER');
+        $connection->useWarehouse('OTHER_WH');
+
+        self::assertSame(
+            [
+                'USE WAREHOUSE "WH";',
+                'USE WAREHOUSE "WH";',
+                'USE ROLE "OWNER";',
+                'USE WAREHOUSE "WH";',
+                'USE WAREHOUSE "OTHER_WH";',
+                'USE WAREHOUSE "OTHER_WH";',
+                'USE ROLE "OTHER_OWNER";',
+                'USE WAREHOUSE "OTHER_WH";',
+            ],
+            $this->queries,
+        );
+    }
+
+    /**
+     * @dataProvider statementChangingWarehouseProvider
+     */
+    public function testWarehouseIsUsedAgainAfterStatementThatCanChangeIt(string $sql): void
+    {
+        $connection = $this->createConnectionWithServerRole(null);
+        $this->setTrackedRole($connection, 'OWNER');
+        (new ReflectionProperty(Connection::class, 'actualWarehouse'))->setValue($connection, 'WH');
+        (new ReflectionProperty(Connection::class, 'warehouseRole'))->setValue($connection, 'OWNER');
+
+        try {
+            $connection->query($sql);
+            self::fail('Query must fail without a database connection.');
+        } catch (RuntimeException) {
+        }
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('USE WAREHOUSE "WH";');
+        $connection->useWarehouse('WH');
+    }
+
+    public static function statementChangingWarehouseProvider(): Generator
+    {
+        yield 'failed use warehouse' => ['USE WAREHOUSE "WH";'];
+        yield 'use warehouse lowercase' => ['use warehouse "OTHER_WH";'];
+        yield 'alter warehouse' => ['ALTER WAREHOUSE "WH" RENAME TO "WH2"'];
+        yield 'drop warehouse' => ['DROP WAREHOUSE IF EXISTS "WH"'];
+    }
+
+    /**
+     * @return Connection&MockObject
+     */
+    private function createConnectionLoggingQueries(): Connection
+    {
+        $connection = $this->createConnectionWithServerRole(null, ['query']);
+        $connection->expects(self::atLeastOnce())
+            ->method('query')
+            ->willReturnCallback(function (string $sql): void {
+                $this->queries[] = $sql;
+            });
+        return $connection;
     }
 
     /**
