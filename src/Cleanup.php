@@ -349,6 +349,7 @@ class Cleanup
                 ));
             }
         }
+        $this->destinationConnection->useRole($this->config->getTargetSnowflakeRole(), true);
     }
 
     private function getDataToRemoveForRole(Connection $connection, string $name, string $mainRoleName): array

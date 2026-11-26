@@ -157,8 +157,15 @@ are not compared. Grants are compared the way the migration creates them:
   because the migration copies it as it is.
 - `granted_by = ACCOUNTADMIN` on the source is expected as the configured target role on the target.
 - Warehouse grants may be recorded on the target as granted by the configured target role instead of
-  the source grantor. The check accepts this when `granted_by` is the only difference. As a result,
-  revoking the warehouse from a project role on the target does not cascade to the grants that role made.
+  the source grantor. The check accepts this when `granted_by` is the only difference. Snowflake keeps
+  one grant per grantor, so the same warehouse grant made by several source grantors becomes one grant on
+  the target. The check accepts this too, also when one of the source grantors is `ACCOUNTADMIN`, and logs
+  which source grantors became one target grant. A warehouse grant is reported only when the target has
+  no grant by the configured target role for it.
+  As a result, revoking the warehouse from a project role on the target does not cascade to the grants
+  that role made. Because the target role is recorded as the grantor and owns the warehouse, neither
+  the main role nor the project role can revoke `USAGE ON WAREHOUSE` from a workspace or child role
+  on the target; only `DROP ROLE` removes it.
 - Account-level grants are compared without the account name, because it differs between accounts.
 - Grants on the `<DB>_SHARE` and `<DB>_OLD` databases are skipped on both accounts.
 - Grants of roles to the configured migration user (`credentials.source.username` on the source account,
