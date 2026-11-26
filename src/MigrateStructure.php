@@ -27,6 +27,9 @@ class MigrateStructure
 
     private array $usedUsers = [];
 
+    /** @var array<string, array<string, true>> database => role => share granted in this run */
+    private array $rolesWithSharePrivileges = [];
+
     public function __construct(
         private readonly Connection $sourceConnection,
         private readonly Connection $destinationConnection,
@@ -622,6 +625,11 @@ SQL;
 
     private function assignSharePrivilegesToRole(string $database, string $role): void
     {
+        if (isset($this->rolesWithSharePrivileges[$database][$role])) {
+            return;
+        }
+        $failedGrantsBefore = count($this->destinationConnection->getFailedGrants());
+
         $this->destinationConnection->assignGrantToRole(GrantToRole::fromArray([
             'privilege' => 'IMPORTED PRIVILEGES',
             'granted_on' => 'DATABASE',
@@ -631,6 +639,11 @@ SQL;
             'grant_option' => 'false',
             'granted_by' => $this->mainMigrationRoleTargetAccount,
         ]));
+
+        // A failed grant is only collected for a later retry, so it is sent again for the next table.
+        if (count($this->destinationConnection->getFailedGrants()) === $failedGrantsBefore) {
+            $this->rolesWithSharePrivileges[$database][$role] = true;
+        }
     }
 
     /**

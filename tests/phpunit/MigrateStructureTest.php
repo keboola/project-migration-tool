@@ -29,6 +29,7 @@ class MigrateStructureTest extends TestCase
     private const TARGET_ROLE = 'MIGRATE_TARGET';
     private const TARGET_USER = 'MIGRATE_TARGET_USER';
     private const WAREHOUSE = 'KEBOOLA_PROD';
+    private const OTHER_OWNER = 'KEBOOLA_1_OTHER';
 
     private const ALL_OBJECTS = [
         'ROLE "KEBOOLA_STORAGE"',
@@ -53,7 +54,8 @@ class MigrateStructureTest extends TestCase
     ];
 
     /**
-     * Statements sent by the code before the structure step became resumable.
+     * Statements sent by the code before the structure step became resumable,
+     * except that the share is granted to each role only once.
      * The synchronize run must still send exactly these.
      */
     private const BASELINE = [
@@ -110,23 +112,14 @@ class MigrateStructureTest extends TestCase
         'target: GRANT OWNERSHIP ON SCHEMA KEBOOLA_1."in.c-main" TO ROLE "KEBOOLA_1" WITH GRANT OPTION',
         'target fetch: SHOW TABLES IN SCHEMA "KEBOOLA_1_SHARE"."in.c-main";',
         'source fetch: SHOW PRIMARY KEYS IN SCHEMA "KEBOOLA_1"."in.c-main";',
-        'target: USE ROLE "MIGRATE_TARGET";',
-        'target: GRANT IMPORTED PRIVILEGES ON DATABASE "KEBOOLA_1_SHARE" TO ROLE "KEBOOLA_1" ',
-        'target: USE ROLE "KEBOOLA_1";',
         'target: CREATE TABLE "KEBOOLA_1"."in.c-main"."t1" LIKE "KEBOOLA_1_SHARE"."in.c-main"."t1";',
         'target: GRANT SELECT ON TABLE KEBOOLA_1."in.c-main"."t1" TO ROLE "KEBOOLA_1" WITH GRANT OPTION',
         'target: ALTER TABLE "KEBOOLA_1"."in.c-main"."t1" ADD PRIMARY KEY ("id");',
-        'target: USE ROLE "MIGRATE_TARGET";',
-        'target: GRANT IMPORTED PRIVILEGES ON DATABASE "KEBOOLA_1_SHARE" TO ROLE "KEBOOLA_1" ',
-        'target: USE ROLE "KEBOOLA_1";',
         'target: CREATE TABLE "KEBOOLA_1"."in.c-main"."t2" LIKE "KEBOOLA_1_SHARE"."in.c-main"."t2";',
         'target: CREATE  SCHEMA "KEBOOLA_1"."out.c-main" WITH MANAGED ACCESS DATA_RETENTION_TIME_IN_DAYS = 7;',
         'target: GRANT OWNERSHIP ON SCHEMA KEBOOLA_1."out.c-main" TO ROLE "KEBOOLA_1" WITH GRANT OPTION',
         'target fetch: SHOW TABLES IN SCHEMA "KEBOOLA_1_SHARE"."out.c-main";',
         'source fetch: SHOW PRIMARY KEYS IN SCHEMA "KEBOOLA_1"."out.c-main";',
-        'target: USE ROLE "MIGRATE_TARGET";',
-        'target: GRANT IMPORTED PRIVILEGES ON DATABASE "KEBOOLA_1_SHARE" TO ROLE "KEBOOLA_1" ',
-        'target: USE ROLE "KEBOOLA_1";',
         'target: CREATE TABLE "KEBOOLA_1"."out.c-main"."t3" LIKE "KEBOOLA_1_SHARE"."out.c-main"."t3";',
         'source: GRANT ROLE "KEBOOLA_1" TO USER "MIGRATE_SOURCE_USER"',
         'source: USE ROLE "KEBOOLA_1";',
@@ -167,6 +160,9 @@ class MigrateStructureTest extends TestCase
     /** @var array<int, array<string, string>>|null rows of SHOW WAREHOUSES LIKE, one exact row when null */
     private ?array $sourceWarehouses = null;
 
+    /** @var array<string, string> table => owner role, the database role when not listed */
+    private array $tableOwners = [];
+
     private TestLogger $logger;
 
     public function testSynchronizeRunSendsSameStatementsAsBefore(): void
@@ -174,6 +170,51 @@ class MigrateStructureTest extends TestCase
         $this->runStructureStep(synchronize: true);
 
         self::assertSame(self::BASELINE, $this->log);
+    }
+
+    public function testTablesWithDifferentOwnersInOneSchemaAreCreatedByTheirOwners(): void
+    {
+        $this->tableOwners = ['t2' => self::OTHER_OWNER, 't3' => self::OTHER_OWNER];
+
+        $this->runStructureStep(synchronize: true);
+
+        self::assertSame(
+            [
+                'target: CREATE TABLE "KEBOOLA_1"."in.c-main"."t1" LIKE "KEBOOLA_1_SHARE"."in.c-main"."t1";',
+                'target: GRANT SELECT ON TABLE KEBOOLA_1."in.c-main"."t1" TO ROLE "KEBOOLA_1" WITH GRANT OPTION',
+                'target: ALTER TABLE "KEBOOLA_1"."in.c-main"."t1" ADD PRIMARY KEY ("id");',
+                'target: USE ROLE "MIGRATE_TARGET";',
+                'target: GRANT IMPORTED PRIVILEGES ON DATABASE "KEBOOLA_1_SHARE" TO ROLE "KEBOOLA_1_OTHER" ',
+                'target: USE ROLE "KEBOOLA_1_OTHER";',
+                'target: CREATE TABLE "KEBOOLA_1"."in.c-main"."t2" LIKE "KEBOOLA_1_SHARE"."in.c-main"."t2";',
+                'target: USE ROLE "KEBOOLA_1";',
+                'target: CREATE  SCHEMA "KEBOOLA_1"."out.c-main" WITH MANAGED ACCESS DATA_RETENTION_TIME_IN_DAYS = 7;',
+                'target: GRANT OWNERSHIP ON SCHEMA KEBOOLA_1."out.c-main" TO ROLE "KEBOOLA_1" WITH GRANT OPTION',
+                'target fetch: SHOW TABLES IN SCHEMA "KEBOOLA_1_SHARE"."out.c-main";',
+                'source fetch: SHOW PRIMARY KEYS IN SCHEMA "KEBOOLA_1"."out.c-main";',
+                'target: USE ROLE "KEBOOLA_1_OTHER";',
+                'target: CREATE TABLE "KEBOOLA_1"."out.c-main"."t3" LIKE "KEBOOLA_1_SHARE"."out.c-main"."t3";',
+            ],
+            $this->logBetween(
+                'source fetch: SHOW PRIMARY KEYS IN SCHEMA "KEBOOLA_1"."in.c-main";',
+                'source: GRANT ROLE "KEBOOLA_1" TO USER "MIGRATE_SOURCE_USER"',
+            ),
+        );
+    }
+
+    public function testFailedShareGrantIsSentAgainForNextTable(): void
+    {
+        $this->failingStatements = [
+            'GRANT IMPORTED PRIVILEGES ON DATABASE "KEBOOLA_1_SHARE" TO ROLE "KEBOOLA_1" ' => 'Temporary error',
+        ];
+
+        $this->runStructureStep(synchronize: true);
+
+        $shareGrants = array_filter(
+            $this->log,
+            fn(string $v) => str_starts_with($v, 'target: GRANT IMPORTED PRIVILEGES ON DATABASE "KEBOOLA_1_SHARE"'),
+        );
+        self::assertCount(4 + 4, $shareGrants, 'Once per database and table, then once per failure again.');
     }
 
     public function testCleanRunDiffersFromBeforeOnlyByExistenceChecks(): void
@@ -719,6 +760,18 @@ class MigrateStructureTest extends TestCase
     }
 
     /**
+     * @return list<string> log entries after $first and before $last
+     */
+    private function logBetween(string $first, string $last): array
+    {
+        $start = array_search($first, $this->log, true);
+        $end = array_search($last, $this->log, true);
+        self::assertIsInt($start);
+        self::assertIsInt($end);
+        return array_slice($this->log, $start + 1, $end - $start - 1);
+    }
+
+    /**
      * @param string[] $log
      * @return string[]
      */
@@ -867,10 +920,14 @@ class MigrateStructureTest extends TestCase
         $grants->addDatabaseGrant(self::grant('OWNERSHIP', 'DATABASE', 'KEBOOLA_1', $role, $role));
         $grants->addSchemaGrant(self::grant('OWNERSHIP', 'SCHEMA', 'KEBOOLA_1."in.c-main"', $role, $role));
         $grants->addSchemaGrant(self::grant('OWNERSHIP', 'SCHEMA', 'KEBOOLA_1."out.c-main"', $role, $role));
-        $grants->addTableGrant(self::grant('OWNERSHIP', 'TABLE', 'KEBOOLA_1."in.c-main"."t1"', $role, $role));
+        $otherOwnerGrants = new RoleGrants();
+        foreach (['t1' => 'in.c-main', 't2' => 'in.c-main', 't3' => 'out.c-main'] as $table => $schema) {
+            $owner = $this->tableOwners[$table] ?? $role;
+            $tableId = sprintf('KEBOOLA_1."%s"."%s"', $schema, $table);
+            ($owner === $role ? $grants : $otherOwnerGrants)
+                ->addTableGrant(self::grant('OWNERSHIP', 'TABLE', $tableId, $owner, $owner));
+        }
         $grants->addTableGrant(self::grant('SELECT', 'TABLE', 'KEBOOLA_1."in.c-main"."t1"', $role, $role));
-        $grants->addTableGrant(self::grant('OWNERSHIP', 'TABLE', 'KEBOOLA_1."in.c-main"."t2"', $role, $role));
-        $grants->addTableGrant(self::grant('OWNERSHIP', 'TABLE', 'KEBOOLA_1."out.c-main"."t3"', $role, $role));
         $grants->addWarehouseGrant(
             self::grant('USAGE', 'WAREHOUSE', self::WAREHOUSE, $role, self::MAIN_ROLE),
             self::WAREHOUSE,
@@ -884,6 +941,12 @@ class MigrateStructureTest extends TestCase
 
         $projectRoles = new ProjectRoles();
         $projectRoles->addRole($projectRole);
+        if ($this->tableOwners !== []) {
+            $otherOwner = new Role(self::OTHER_OWNER, self::MAIN_ROLE);
+            $otherOwner->setGrants($otherOwnerGrants);
+            $otherOwner->setFutureGrants(new RoleFutureGrants());
+            $projectRoles->addRole($otherOwner);
+        }
         return $projectRoles;
     }
 
