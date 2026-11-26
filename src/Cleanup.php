@@ -390,7 +390,7 @@ class Cleanup
      * owner is handled as the main role.
      *
      * @param GrantToUser[] $userGrants
-     * @param array<string, string> $databaseOwners database => owner role
+     * @param array<int|string, string> $databaseOwners database => owner role
      * @return GrantToUser[]
      */
     private function selectUserGrantsToRevoke(array $userGrants, array $databaseOwners): array
@@ -413,7 +413,7 @@ class Cleanup
                 $this->logger->info(sprintf(
                     'Database "%s" is still owned by the main role "%s", so its roles are kept on user "%s". '
                     . 'Please check them manually.',
-                    $database,
+                    (string) $database,
                     $owner,
                     $user,
                 ));
