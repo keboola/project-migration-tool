@@ -313,7 +313,7 @@ class Cleanup
 
     public function postMigration(): void
     {
-        $databaseRoles = [];
+        $databaseOwners = [];
         foreach ($this->config->getDatabases() as $database) {
             $databases = [
                 $database . '_OLD',
@@ -323,7 +323,7 @@ class Cleanup
             $allDatabases = $this->destinationConnection->fetchAll('SHOW DATABASES;');
             $migratedDatabase = Helper::filterRowsByExactName($allDatabases, $database);
             if ($migratedDatabase !== []) {
-                $databaseRoles[] = $migratedDatabase[0]['owner'];
+                $databaseOwners[$database] = (string) $migratedDatabase[0]['owner'];
             } else {
                 $this->logger->info(sprintf(
                     'The owner role of database "%s" was not found on the target account, '
@@ -356,7 +356,7 @@ class Cleanup
             ))
         );
 
-        $userRolesToRevoke = $this->selectUserGrantsToRevoke($userRoles, $databaseRoles);
+        $userRolesToRevoke = $this->selectUserGrantsToRevoke($userRoles, $databaseOwners);
         foreach (Helper::orderUserGrantsForRevoke($userRolesToRevoke) as $userRole) {
             try {
                 if ($userRole->getGrantedBy()) {
@@ -384,11 +384,16 @@ class Cleanup
      * Other roles can belong to projects that are still being migrated, so they are kept. The main role
      * is shared by all projects and is revoked only when no kept role depends on it.
      *
+     * A database whose OWNERSHIP was not moved to its project role is still owned by the main role (the
+     * owner was granted to the user by the configured role, or has no grantor). That owner is not a
+     * project role, because every project role is granted by it. Its roles are kept on the user and the
+     * owner is handled as the main role.
+     *
      * @param GrantToUser[] $userGrants
-     * @param string[] $databaseRoles
+     * @param array<string, string> $databaseOwners database => owner role
      * @return GrantToUser[]
      */
-    private function selectUserGrantsToRevoke(array $userGrants, array $databaseRoles): array
+    private function selectUserGrantsToRevoke(array $userGrants, array $databaseOwners): array
     {
         $targetRole = $this->config->getTargetSnowflakeRole();
         $user = $this->config->getTargetSnowflakeUser();
@@ -398,20 +403,40 @@ class Cleanup
             $grantedByOfRole[$grant->getRole()] = $grant->getGrantedBy();
         }
 
-        $projectRoles = array_values(array_diff($databaseRoles, [$targetRole]));
+        $databaseRoles = [];
+        $mainRoles = [];
+        foreach ($databaseOwners as $database => $owner) {
+            if ($owner === $targetRole) {
+                continue;
+            }
+            if (in_array($grantedByOfRole[$owner] ?? null, [$targetRole, ''], true)) {
+                $this->logger->info(sprintf(
+                    'Database "%s" is still owned by the main role "%s", so its roles are kept on user "%s". '
+                    . 'Please check them manually.',
+                    $database,
+                    $owner,
+                    $user,
+                ));
+                $mainRoles[] = $owner;
+                continue;
+            }
+            $databaseRoles[] = $owner;
+        }
+
+        $projectRoles = array_values(array_unique($databaseRoles));
         do {
             $projectRoleCount = count($projectRoles);
             foreach ($grantedByOfRole as $role => $grantedBy) {
+                $role = (string) $role;
                 if ($role !== $targetRole
                     && in_array($grantedBy, $projectRoles, true)
                     && !in_array($role, $projectRoles, true)
                 ) {
-                    $projectRoles[] = (string) $role;
+                    $projectRoles[] = $role;
                 }
             }
         } while (count($projectRoles) !== $projectRoleCount);
 
-        $mainRoles = [];
         foreach ($databaseRoles as $databaseRole) {
             $grantedBy = $grantedByOfRole[$databaseRole] ?? '';
             if ($grantedBy !== '' && $grantedBy !== $targetRole && !in_array($grantedBy, $projectRoles, true)) {

@@ -112,8 +112,8 @@ class CleanupTest extends TestCase
                     $databaseOwners,
                 ),
                 'SHOW GRANTS TO USER "MIGRATE_TARGET_USER"' => array_map(
-                    fn(string $role, string $grantedBy) => [
-                        'role' => $role,
+                    fn(int|string $role, string $grantedBy) => [
+                        'role' => (string) $role,
                         'granted_to' => 'USER',
                         'grantee_name' => self::TARGET_USER,
                         'granted_by' => $grantedBy,
@@ -226,6 +226,49 @@ class CleanupTest extends TestCase
                 'Keeping main role "KEBOOLA_STORAGE" on user "MIGRATE_TARGET_USER", '
                 . 'because roles of other projects depend on it: SAPI_2, SAPI_2_RO.',
             ],
+        ];
+
+        yield 'database still owned by main role' => [
+            'databaseOwners' => ['KEBOOLA_1' => 'KEBOOLA_STORAGE', 'KEBOOLA_2' => 'SAPI_2', 'KEBOOLA_9' => 'KEBOOLA_9'],
+            'userRoles' => $migratedProjects + [
+                'KEBOOLA_9' => 'KEBOOLA_STORAGE',
+                'KEBOOLA_9_RO' => 'KEBOOLA_9',
+            ],
+            'expectedQueries' => [
+                'USE ROLE "SAPI_2";',
+                'REVOKE ROLE "SAPI_2_RO" FROM USER "MIGRATE_TARGET_USER"',
+                'USE ROLE "KEBOOLA_STORAGE";',
+                'REVOKE ROLE "SAPI_2" FROM USER "MIGRATE_TARGET_USER"',
+            ],
+            'expectedInfo' => [
+                'Database "KEBOOLA_1" is still owned by the main role "KEBOOLA_STORAGE", '
+                . 'so its roles are kept on user "MIGRATE_TARGET_USER". Please check them manually.',
+                'Keeping roles of other projects on user "MIGRATE_TARGET_USER": '
+                . 'KEBOOLA_1, KEBOOLA_1_RO, KEBOOLA_WORKSPACE_1, KEBOOLA_9, KEBOOLA_9_RO.',
+                'Keeping main role "KEBOOLA_STORAGE" on user "MIGRATE_TARGET_USER", because roles of other '
+                . 'projects depend on it: KEBOOLA_1, KEBOOLA_1_RO, KEBOOLA_WORKSPACE_1, KEBOOLA_9, KEBOOLA_9_RO.',
+            ],
+        ];
+
+        yield 'all-digit role names' => [
+            'databaseOwners' => ['KEBOOLA_1' => 'KEBOOLA_1', 'KEBOOLA_2' => '123'],
+            'userRoles' => [
+                'MIGRATE_TARGET' => '',
+                'KEBOOLA_STORAGE' => 'MIGRATE_TARGET',
+                'KEBOOLA_1' => 'KEBOOLA_STORAGE',
+                '123' => 'KEBOOLA_STORAGE',
+                '456' => '123',
+            ],
+            'expectedQueries' => [
+                'USE ROLE "123";',
+                'REVOKE ROLE "456" FROM USER "MIGRATE_TARGET_USER"',
+                'USE ROLE "KEBOOLA_STORAGE";',
+                'REVOKE ROLE "123" FROM USER "MIGRATE_TARGET_USER"',
+                'REVOKE ROLE "KEBOOLA_1" FROM USER "MIGRATE_TARGET_USER"',
+                'USE ROLE "MIGRATE_TARGET";',
+                'REVOKE ROLE "KEBOOLA_STORAGE" FROM USER "MIGRATE_TARGET_USER"',
+            ],
+            'expectedInfo' => [],
         ];
     }
 
