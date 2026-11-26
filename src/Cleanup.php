@@ -11,6 +11,7 @@ use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Snowflake\Connection;
 use ProjectMigrationTool\Snowflake\Helper;
 use ProjectMigrationTool\Snowflake\ReplicationGroup;
+use ProjectMigrationTool\Snowflake\Retry;
 use ProjectMigrationTool\ValueObject\FutureGrantToRole;
 use ProjectMigrationTool\ValueObject\GrantToRole;
 use ProjectMigrationTool\ValueObject\GrantToUser;
@@ -31,7 +32,10 @@ class Cleanup
     ) {
     }
 
-    public function teardownReplication(): void
+    /**
+     * @param ?callable(int):mixed $sleeper
+     */
+    public function teardownReplication(?callable $sleeper = null): void
     {
         if ($this->sourceConnection->getRegion() === $this->destinationConnection->getRegion()) {
             // Same-region migration never created a replication group; nothing to tear down.
@@ -58,8 +62,19 @@ class Cleanup
             ));
         }
 
+        // The source account can still see the dropped replica for a while.
         $this->logger->info(sprintf('Dropping replication group "%s" on source account.', $groupName));
-        $this->sourceConnection->query(ReplicationGroup::dropSql($groupName));
+        $sourceConnection = $this->sourceConnection;
+        Retry::whileErrorContains(
+            'is currently a primary replication group in a replication relationship',
+            fn() => $sourceConnection->query(ReplicationGroup::dropSql($groupName)),
+            sleeper: $sleeper ?? fn(int $seconds): int => sleep($seconds),
+            logger: $this->logger,
+            retryMessage: sprintf(
+                'Replication group "%s" is still a primary of a replica on the source account.',
+                $groupName,
+            ),
+        );
     }
 
     public function sourceAccount(): void
@@ -298,14 +313,28 @@ class Cleanup
 
     public function postMigration(): void
     {
+        $databaseOwners = [];
         foreach ($this->config->getDatabases() as $database) {
             $databases = [
                 $database . '_OLD',
                 $database . '_SHARE',
             ];
 
+            $allDatabases = $this->destinationConnection->fetchAll('SHOW DATABASES;');
+            $migratedDatabase = Helper::filterRowsByExactName($allDatabases, $database);
+            if ($migratedDatabase !== []) {
+                $databaseOwners[$database] = (string) $migratedDatabase[0]['owner'];
+            } else {
+                $this->logger->info(sprintf(
+                    'The owner role of database "%s" was not found on the target account, '
+                    . 'its roles are kept on user "%s".',
+                    $database,
+                    $this->config->getTargetSnowflakeUser(),
+                ));
+            }
+
             $removeDatabases = array_filter(
-                $this->destinationConnection->fetchAll('SHOW DATABASES;'),
+                $allDatabases,
                 fn($v) => in_array($v['name'], $databases)
             );
 
@@ -327,10 +356,8 @@ class Cleanup
             ))
         );
 
-        foreach (Helper::orderUserGrantsForRevoke($userRoles) as $userRole) {
-            if ($userRole->getRole() === $this->config->getTargetSnowflakeRole()) {
-                continue;
-            }
+        $userRolesToRevoke = $this->selectUserGrantsToRevoke($userRoles, $databaseOwners);
+        foreach (Helper::orderUserGrantsForRevoke($userRolesToRevoke) as $userRole) {
             try {
                 if ($userRole->getGrantedBy()) {
                     $this->destinationConnection->useRole($userRole->getGrantedBy());
@@ -350,6 +377,126 @@ class Cleanup
             }
         }
         $this->destinationConnection->useRole($this->config->getTargetSnowflakeRole(), true);
+    }
+
+    /**
+     * The structure step grants every role to the migration user as the owner of that role. So the roles
+     * of a migrated database are its owner role and every role granted to the user by one of them.
+     * Other roles can belong to projects that are still being migrated, so they are kept. The main role
+     * is shared by all projects and is revoked only when no kept role depends on it.
+     *
+     * A database whose OWNERSHIP was not moved to its project role is still owned by the main role (the
+     * owner was granted to the user by the configured role, or has no grantor). That owner is not a
+     * project role, because every project role is granted by it. Its roles are kept on the user and the
+     * owner is handled as the main role.
+     *
+     * @param GrantToUser[] $userGrants
+     * @param array<int|string, string> $databaseOwners database => owner role
+     * @return GrantToUser[]
+     */
+    private function selectUserGrantsToRevoke(array $userGrants, array $databaseOwners): array
+    {
+        $targetRole = $this->config->getTargetSnowflakeRole();
+        $user = $this->config->getTargetSnowflakeUser();
+
+        $grantedByOfRole = [];
+        foreach ($userGrants as $grant) {
+            $grantedByOfRole[$grant->getRole()] = $grant->getGrantedBy();
+        }
+
+        $databaseRoles = [];
+        $mainRoles = [];
+        foreach ($databaseOwners as $database => $owner) {
+            if ($owner === $targetRole) {
+                continue;
+            }
+            if (in_array($grantedByOfRole[$owner] ?? null, [$targetRole, ''], true)) {
+                $this->logger->info(sprintf(
+                    'Database "%s" is still owned by the main role "%s", so its roles are kept on user "%s". '
+                    . 'Please check them manually.',
+                    (string) $database,
+                    $owner,
+                    $user,
+                ));
+                $mainRoles[] = $owner;
+                continue;
+            }
+            $databaseRoles[] = $owner;
+        }
+
+        $projectRoles = array_values(array_unique($databaseRoles));
+        do {
+            $projectRoleCount = count($projectRoles);
+            foreach ($grantedByOfRole as $role => $grantedBy) {
+                $role = (string) $role;
+                if ($role !== $targetRole
+                    && in_array($grantedBy, $projectRoles, true)
+                    && !in_array($role, $projectRoles, true)
+                ) {
+                    $projectRoles[] = $role;
+                }
+            }
+        } while (count($projectRoles) !== $projectRoleCount);
+
+        foreach ($databaseRoles as $databaseRole) {
+            $grantedBy = $grantedByOfRole[$databaseRole] ?? '';
+            if ($grantedBy !== '' && $grantedBy !== $targetRole && !in_array($grantedBy, $projectRoles, true)) {
+                $mainRoles[] = $grantedBy;
+            }
+        }
+        $mainRoles = array_values(array_unique($mainRoles));
+
+        $rolesToRevoke = $projectRoles;
+        $keptRoles = array_values(array_filter(
+            array_map('strval', array_keys($grantedByOfRole)),
+            fn(string $role) => !in_array($role, [$targetRole, ...$projectRoles, ...$mainRoles], true),
+        ));
+
+        foreach ($mainRoles as $mainRole) {
+            $dependentRoles = array_values(array_filter(
+                $keptRoles,
+                fn(string $role) => self::isGrantedThrough($role, $mainRole, $grantedByOfRole),
+            ));
+            if ($dependentRoles === []) {
+                $rolesToRevoke[] = $mainRole;
+                continue;
+            }
+            $this->logger->info(sprintf(
+                'Keeping main role "%s" on user "%s", because roles of other projects depend on it: %s.',
+                $mainRole,
+                $user,
+                implode(', ', $dependentRoles),
+            ));
+        }
+
+        if ($keptRoles !== []) {
+            $this->logger->info(sprintf(
+                'Keeping roles of other projects on user "%s": %s.',
+                $user,
+                implode(', ', $keptRoles),
+            ));
+        }
+
+        return array_values(array_filter(
+            $userGrants,
+            fn(GrantToUser $grant) => in_array($grant->getRole(), $rolesToRevoke, true),
+        ));
+    }
+
+    /**
+     * @param array<string, string> $grantedByOfRole
+     */
+    private static function isGrantedThrough(string $role, string $grantor, array $grantedByOfRole): bool
+    {
+        $visited = [];
+        while (isset($grantedByOfRole[$role]) && !isset($visited[$role])) {
+            $visited[$role] = true;
+            $role = $grantedByOfRole[$role];
+            if ($role === $grantor) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private function getDataToRemoveForRole(Connection $connection, string $name, string $mainRoleName): array

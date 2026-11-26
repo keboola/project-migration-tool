@@ -8,6 +8,7 @@ use Keboola\Component\UserException;
 use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Snowflake\Helper;
 use ProjectMigrationTool\Snowflake\ReplicationGroup;
+use ProjectMigrationTool\Snowflake\Retry;
 use Psr\Log\LoggerInterface;
 
 class PrepareMigration
@@ -24,8 +25,12 @@ class PrepareMigration
     ) {
     }
 
-    public function createReplication(): void
+    /**
+     * @param ?callable(int):mixed $sleeper
+     */
+    public function createReplication(?callable $sleeper = null): void
     {
+        $sleeper ??= fn(int $seconds): int => sleep($seconds);
         if ($this->sourceConnection->getRegion() === $this->destinationConnection->getRegion()) {
             // Same-region migration uses sharing only; no replication group needed.
             return;
@@ -47,13 +52,26 @@ class PrepareMigration
             $this->migrateConnection->getAccountName(),
         ));
 
-        // 2. Create (or ensure) the replica replication group on the MIGRATE account.
+        // 2. Create (or ensure) the replica replication group on the MIGRATE account. A new primary
+        //    group can take a while to become visible on another account.
         $this->logger->info(sprintf('Ensuring replica replication group "%s" on migrate account.', $groupName));
-        $this->migrateConnection->query(ReplicationGroup::createReplicaSql(
+        $migrateConnection = $this->migrateConnection;
+        $createReplicaSql = ReplicationGroup::createReplicaSql(
             $groupName,
             $this->sourceConnection->getOrganizationName(),
             $this->sourceConnection->getAccountName(),
-        ));
+        );
+        Retry::whileErrorContains(
+            'does not exist or is not authorized',
+            fn() => $migrateConnection->query($createReplicaSql),
+            sleeper: $sleeper,
+            logger: $this->logger,
+            retryMessage: sprintf(
+                'Primary replication group "%s" is not visible on the migrate account yet.',
+                $groupName,
+            ),
+            exhaustedHint: 'The migrate account may not be enabled for replication with the source account.',
+        );
 
         // 3. Ensure a warehouse to drive the refresh.
         $this->ensureMigrateWarehouse();
@@ -63,13 +81,12 @@ class PrepareMigration
         $this->migrateConnection->query(ReplicationGroup::refreshSql($groupName));
 
         $replicationGroup = new ReplicationGroup();
-        $migrateConnection = $this->migrateConnection;
         $replicationGroup->waitForRefresh(
             $groupName,
             fetchProgress: fn(): array => $migrateConnection->fetchAll(
                 ReplicationGroup::refreshProgressSql($groupName)
             ),
-            sleeper: fn(int $seconds): int => sleep($seconds),
+            sleeper: $sleeper,
             clock: fn(): int => time(),
             logger: $this->logger,
             timeoutSeconds: $this->config->getReplicationRefreshTimeout(),

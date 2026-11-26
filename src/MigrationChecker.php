@@ -645,7 +645,8 @@ class MigrationChecker
     }
 
     /**
-     * After "runCleanup" the target user has only the configured role, see Cleanup::postMigration().
+     * After "runCleanup" the target user no longer has the roles of the migrated databases. It can still have
+     * roles of other projects that are being migrated, and possibly the main role, see Cleanup::postMigration().
      */
     private function grantRoleToUserIfMissing(
         Snowflake\Connection $connection,
