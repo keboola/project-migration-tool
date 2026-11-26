@@ -446,10 +446,10 @@ class MigrateData
     ): void {
         $currentRole = $this->destinationConnection->getCurrentRole();
         $this->destinationConnection->useRole($mainRole);
-        $dbExists = $this->destinationConnection->fetchAll(sprintf(
+        $dbExists = Helper::filterRowsByExactName($this->destinationConnection->fetchAll(sprintf(
             'SHOW DATABASES LIKE %s',
             QueryBuilder::quote($database . '_OLD')
-        ));
+        )), $database . '_OLD');
         if (!$dbExists) {
             return;
         }

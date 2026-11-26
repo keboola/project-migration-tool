@@ -8,6 +8,7 @@ use Keboola\SnowflakeDbAdapter\QueryBuilder;
 use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\ValueObject\FutureGrantToRole;
 use ProjectMigrationTool\ValueObject\GrantToRole;
+use ProjectMigrationTool\ValueObject\GrantToUser;
 use ProjectMigrationTool\ValueObject\RoleFutureGrants;
 use ProjectMigrationTool\ValueObject\RoleGrants;
 
@@ -33,6 +34,56 @@ class Helper
             }
             return true;
         });
+    }
+
+    /**
+     * LIKE in SHOW commands ignores case and treats "_" and "%" as wildcards,
+     * so it can return objects with a different name.
+     *
+     * @param array<array<string, string>> $rows
+     * @return list<array<string, string>>
+     */
+    public static function filterRowsByExactName(array $rows, string $name): array
+    {
+        return array_values(array_filter($rows, fn(array $row): bool => ($row['name'] ?? null) === $name));
+    }
+
+    /**
+     * A role is revoked only after every remaining role it granted, because revoking a role
+     * runs as its grantor. Otherwise, and for cycles, the reverse of the given order is kept.
+     *
+     * @param GrantToUser[] $grants
+     * @return GrantToUser[]
+     */
+    public static function orderUserGrantsForRevoke(array $grants): array
+    {
+        $remaining = array_values(array_reverse($grants));
+        $ordered = [];
+        while ($remaining !== []) {
+            $next = 0;
+            foreach ($remaining as $index => $grant) {
+                if (!self::isGrantorOfAny($grant->getRole(), $remaining, $index)) {
+                    $next = $index;
+                    break;
+                }
+            }
+            $ordered[] = $remaining[$next];
+            array_splice($remaining, $next, 1);
+        }
+        return $ordered;
+    }
+
+    /**
+     * @param GrantToUser[] $grants
+     */
+    private static function isGrantorOfAny(string $role, array $grants, int $skipIndex): bool
+    {
+        foreach ($grants as $index => $grant) {
+            if ($index !== $skipIndex && $grant->getGrantedBy() === $role) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

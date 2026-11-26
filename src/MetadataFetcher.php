@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ProjectMigrationTool;
 
+use Keboola\Component\UserException;
 use Keboola\SnowflakeDbAdapter\QueryBuilder;
 use ProjectMigrationTool\Configuration\Config;
 use ProjectMigrationTool\Snowflake\Helper;
@@ -43,11 +44,15 @@ class MetadataFetcher
         $uniqueMainRoles = array_unique($grantsOfRoles);
         assert(count($uniqueMainRoles) === 1);
 
-        $mainRoleResult = $this->sourceConnection->fetchAll(sprintf(
+        $mainRoleName = current($uniqueMainRoles);
+        $mainRoleResult = Helper::filterRowsByExactName($this->sourceConnection->fetchAll(sprintf(
             'SHOW ROLES LIKE %s',
-            QueryBuilder::quote(current($uniqueMainRoles))
-        ));
-        $mainRole = Role::fromArray(current($mainRoleResult));
+            QueryBuilder::quote($mainRoleName)
+        )), $mainRoleName);
+        if ($mainRoleResult === []) {
+            throw $this->roleNotFoundException($mainRoleName);
+        }
+        $mainRole = Role::fromArray($mainRoleResult[0]);
 
         $grants = array_map(
             fn(array $v) => GrantToRole::fromArray($v),
@@ -68,9 +73,12 @@ class MetadataFetcher
         foreach ($this->config->getDatabases() as $database) {
             $databaseRole = $this->sourceConnection->getOwnershipRoleOnDatabase($database);
 
-            $rolesResult = $this->sourceConnection->fetchAll(
+            $rolesResult = Helper::filterRowsByExactName($this->sourceConnection->fetchAll(
                 sprintf('SHOW ROLES LIKE %s', QueryBuilder::quote($databaseRole))
-            );
+            ), $databaseRole);
+            if ($rolesResult === []) {
+                throw $this->roleNotFoundException($databaseRole);
+            }
 
             $roles = [];
             foreach ($rolesResult as $roleResult) {
@@ -106,6 +114,16 @@ class MetadataFetcher
             $tmp[$databaseRole] = $projectRoles;
         }
         return $tmp;
+    }
+
+    private function roleNotFoundException(string $roleName): UserException
+    {
+        return new UserException(sprintf(
+            'Role "%s" not found on the source account. The source role "%s" probably cannot see it, '
+            . 'for example because it does not have the MANAGE GRANTS privilege.',
+            $roleName,
+            $this->config->getSourceSnowflakeRole(),
+        ));
     }
 
     /**

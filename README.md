@@ -17,6 +17,7 @@ CREATE USER "MIGRATE" PASSWORD='MIGRATE_PASSWORD' DEFAULT_ROLE='SOURCE_MAIN_MIGR
 GRANT ROLE "SOURCE_MAIN_MIGRATE" TO USER "MIGRATE";
 GRANT MANAGE GRANTS ON ACCOUNT TO ROLE SOURCE_MAIN_MIGRATE;
 GRANT CREATE SHARE ON ACCOUNT TO ROLE SOURCE_MAIN_MIGRATE;
+GRANT MANAGE SHARE TARGET ON ACCOUNT TO ROLE SOURCE_MAIN_MIGRATE;
 GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE SOURCE_MAIN_MIGRATE;
 GRANT USAGE ON WAREHOUSE MIGRATE TO ROLE SOURCE_MAIN_MIGRATE;
 GRANT USAGE ON WAREHOUSE MIGRATE_SMALL TO ROLE SOURCE_MAIN_MIGRATE;
@@ -155,6 +156,16 @@ are not compared. Grants are compared the way the migration creates them:
   `credentials.target.warehouse`, as the migration does. The users' `default_warehouse` is not renamed,
   because the migration copies it as it is.
 - `granted_by = ACCOUNTADMIN` on the source is expected as the configured target role on the target.
+- Warehouse grants may be recorded on the target as granted by the configured target role instead of
+  the source grantor. The check accepts this when `granted_by` is the only difference. Snowflake keeps
+  one grant per grantor, so the same warehouse grant made by several source grantors becomes one grant on
+  the target. The check accepts this too, also when one of the source grantors is `ACCOUNTADMIN`, and logs
+  which source grantors became one target grant. A warehouse grant is reported only when the target has
+  no grant by the configured target role for it.
+  As a result, revoking the warehouse from a project role on the target does not cascade to the grants
+  that role made. Because the target role is recorded as the grantor and owns the warehouse, neither
+  the main role nor the project role can revoke `USAGE ON WAREHOUSE` from a workspace or child role
+  on the target; only `DROP ROLE` removes it.
 - Account-level grants are compared without the account name, because it differs between accounts.
 - Grants on the `<DB>_SHARE` and `<DB>_OLD` databases are skipped on both accounts.
 - Grants of roles to the configured migration user (`credentials.source.username` on the source account,

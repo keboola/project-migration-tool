@@ -164,6 +164,9 @@ class MigrateStructureTest extends TestCase
     /** @var array<string, string> view => view it selects from */
     private array $viewDependencies = [];
 
+    /** @var array<int, array<string, string>>|null rows of SHOW WAREHOUSES LIKE, one exact row when null */
+    private ?array $sourceWarehouses = null;
+
     private TestLogger $logger;
 
     public function testSynchronizeRunSendsSameStatementsAsBefore(): void
@@ -322,13 +325,40 @@ class MigrateStructureTest extends TestCase
         $this->assertMainRoleSetupSkipped();
     }
 
-    public function testRoleMatchingOnlyByWildcardOrCaseIsNotUsedForOwner(): void
+    public function testRoleMatchingOnlyByWildcardOrCaseIsNotTreatedAsExisting(): void
     {
         $this->existingOnTarget = ['ROLE "KEBOOLAXSTORAGE"', 'ROLE "keboola_storage"'];
 
         $this->runStructureStep(synchronize: false);
 
-        $this->assertMainRoleSetupSkipped();
+        self::assertNotContains('target fetch: SHOW GRANTS TO USER "MIGRATE_TARGET_USER"', $this->log);
+        self::assertSame(self::ALL_OBJECTS, $this->createdOnTarget);
+    }
+
+    public function testWarehouseWithExactNameIsUsedWhenLikeReturnsMoreRows(): void
+    {
+        $this->sourceWarehouses = [
+            self::warehouseRow('keboola_prod', 'X-Large'),
+            self::warehouseRow(self::WAREHOUSE, 'Small'),
+            self::warehouseRow('KEBOOLAXPROD', 'Medium'),
+        ];
+
+        $this->runStructureStep(synchronize: true);
+
+        self::assertSame(self::BASELINE, $this->log);
+    }
+
+    public function testWarehouseMatchingOnlyByWildcardOrCaseFails(): void
+    {
+        $this->sourceWarehouses = [
+            self::warehouseRow('keboola_prod', 'Small'),
+            self::warehouseRow('KEBOOLAXPROD', 'Small'),
+        ];
+
+        $this->expectException(UserException::class);
+        $this->expectExceptionMessage('Warehouse "KEBOOLA_PROD" not found on source account.');
+
+        $this->runStructureStep(synchronize: true);
     }
 
     private function assertMainRoleSetupSkipped(): void
@@ -582,13 +612,8 @@ class MigrateStructureTest extends TestCase
                 self::grantRow('OWNERSHIP', 'DATABASE', self::DATABASE, self::DATABASE, self::DATABASE),
             ],
             "SHOW DATABASES LIKE 'KEBOOLA_1'" => [['name' => self::DATABASE, 'retention_time' => '7']],
-            "SHOW WAREHOUSES LIKE 'KEBOOLA_PROD'" => [[
-                'name' => self::WAREHOUSE,
-                'size' => 'Small',
-                'type' => 'STANDARD',
-                'auto_suspend' => '60',
-                'auto_resume' => 'true',
-            ]],
+            "SHOW WAREHOUSES LIKE 'KEBOOLA_PROD'" => $this->sourceWarehouses
+                ?? [self::warehouseRow(self::WAREHOUSE, 'Small')],
             'SHOW GRANTS TO ROLE "MIGRATE_SOURCE"' => [
                 self::grantRow('USAGE', 'WAREHOUSE', self::WAREHOUSE, self::SOURCE_ROLE, self::SOURCE_ROLE),
             ],
@@ -870,6 +895,20 @@ class MigrateStructureTest extends TestCase
         string $grantedBy,
     ): GrantToRole {
         return GrantToRole::fromArray(self::grantRow($privilege, $grantedOn, $name, $granteeName, $grantedBy));
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private static function warehouseRow(string $name, string $size): array
+    {
+        return [
+            'name' => $name,
+            'size' => $size,
+            'type' => 'STANDARD',
+            'auto_suspend' => '60',
+            'auto_resume' => 'true',
+        ];
     }
 
     /**

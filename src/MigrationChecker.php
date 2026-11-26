@@ -83,6 +83,8 @@ class MigrationChecker
     /** @var string[] */
     private array $temporaryDatabases = [];
 
+    private int $acceptedWarehouseGrantsByMigrationRole = 0;
+
     public function __construct(
         readonly Snowflake\Connection $sourceConnection,
         readonly Snowflake\Connection $destinationConnection,
@@ -99,6 +101,7 @@ class MigrationChecker
         $this->usersToCheck = [];
         $this->excludedMigrationUserGrants = [self::SOURCE => 0, self::TARGET => 0];
         $this->excludedTemporaryDatabaseGrants = [self::SOURCE => 0, self::TARGET => 0];
+        $this->acceptedWarehouseGrantsByMigrationRole = 0;
         $this->temporaryDatabases = [];
         foreach ($this->databases as $database) {
             $this->temporaryDatabases[] = $database . '_SHARE';
@@ -300,28 +303,24 @@ class MigrationChecker
 
         $sourceGrants = $this->fetchGrantsToRole($this->sourceConnection, $this->sourceRoles, $role);
         $targetGrants = $this->fetchGrantsToRole($this->destinationConnection, $this->targetRoles, $role);
-        $this->comparison->compareItems(
-            StructureComparison::GROUP_GRANTS_TO_ROLES,
+        $comparedTargetGrants = array_map(
+            fn(array $grant) => $this->withoutAccountName($grant),
+            $this->withoutTemporaryDatabaseGrants($targetGrants, self::TARGET),
+        );
+        $sourceGrantsToCompare = $this->withoutTemporaryDatabaseGrants($sourceGrants, self::SOURCE);
+        $comparedSourceGrants = $this->withWarehouseGrantsByMigrationRole(
             array_map(
                 fn(array $grant) => $this->withoutAccountName($this->asMigratedGrant($grant)),
-                $this->withoutTemporaryDatabaseGrants($sourceGrants, self::SOURCE),
+                $sourceGrantsToCompare,
             ),
-            array_map(
-                fn(array $grant) => $this->withoutAccountName($grant),
-                $this->withoutTemporaryDatabaseGrants($targetGrants, self::TARGET),
-            ),
-            fn(array $grant) => implode(' ', array_filter(
-                [
-                    $grant['privilege'],
-                    'ON',
-                    $grant['granted_on'],
-                    $grant['name'],
-                    'TO',
-                    $grant['granted_to'],
-                    $grant['grantee_name'],
-                ],
-                fn($value) => $value !== '',
-            )),
+            array_map(fn(array $grant) => (string) $grant['granted_by'], $sourceGrantsToCompare),
+            $comparedTargetGrants,
+        );
+        $this->comparison->compareItems(
+            StructureComparison::GROUP_GRANTS_TO_ROLES,
+            $comparedSourceGrants,
+            $comparedTargetGrants,
+            fn(array $grant) => $this->getGrantToRoleItemName($grant),
             self::GRANT_TO_ROLE_FIELDS,
         );
 
@@ -360,6 +359,146 @@ class MigrationChecker
                 $this->checkRoleWithChildRoles((string) $grant['name']);
             }
         }
+    }
+
+    /**
+     * @param Row $grant
+     */
+    private function getGrantToRoleItemName(array $grant): string
+    {
+        return implode(' ', array_filter(
+            [
+                $grant['privilege'],
+                'ON',
+                $grant['granted_on'],
+                $grant['name'],
+                'TO',
+                $grant['granted_to'],
+                $grant['grantee_name'],
+            ],
+            fn($value) => $value !== '',
+        ));
+    }
+
+    /**
+     * The migration grants as the source grantor, but on the target Snowflake records some warehouse grants
+     * as granted by the configured target role. Probable cause: the migration user has
+     * DEFAULT_SECONDARY_ROLES = ALL and the target role owns the warehouse. The access is the same,
+     * so a warehouse grant that differs only in "granted_by" is accepted.
+     *
+     * Source grants that match a target grant exactly are paired first. Each remaining source warehouse grant
+     * can then match a remaining target grant by the migration role. Snowflake keeps one grant per privilege,
+     * object, grantee and grantor, so source grants from several grantors become one target grant.
+     * All of them are accepted, but only one stays in the result, and the collapse is logged.
+     * This includes a target grant by the migration role that already matches a source grant exactly
+     * (e.g. one granted by ACCOUNTADMIN): another source grant collapsed into it is dropped and accepted.
+     * A source grant is returned unchanged, so the comparison reports it, and its grantor is logged,
+     * only when the target has no grant by the migration role for it.
+     *
+     * @param array<int, Row> $sourceGrants
+     * @param array<int, string> $originalSourceGrantors "granted_by" on the source, before asMigratedGrant()
+     * @param array<int, Row> $targetGrants
+     * @return array<int, Row>
+     */
+    private function withWarehouseGrantsByMigrationRole(
+        array $sourceGrants,
+        array $originalSourceGrantors,
+        array $targetGrants,
+    ): array {
+        $migrationRole = $this->config->getTargetSnowflakeRole();
+        /** @var array<string, array<int, Row>> $targetGrantsByName */
+        $targetGrantsByName = [];
+        foreach ($targetGrants as $grant) {
+            $targetGrantsByName[$this->getGrantToRoleItemName($grant)][] = $grant;
+        }
+        /** @var array<string, array<int, int>> $sourceIndexesByName */
+        $sourceIndexesByName = [];
+        foreach ($sourceGrants as $index => $grant) {
+            $sourceIndexesByName[$this->getGrantToRoleItemName($grant)][] = $index;
+        }
+
+        foreach ($sourceIndexesByName as $name => $sourceIndexes) {
+            $remainingTargetGrants = $targetGrantsByName[$name] ?? [];
+            /** @var array<int, Row> $exactlyMatchedTargetGrants */
+            $exactlyMatchedTargetGrants = [];
+            /** @var array<int, string> $exactSourceGrantorByTargetIndex */
+            $exactSourceGrantorByTargetIndex = [];
+            $remainingSourceIndexes = [];
+            foreach ($sourceIndexes as $sourceIndex) {
+                $targetIndex = $this->findSameGrantToRole($sourceGrants[$sourceIndex], $remainingTargetGrants);
+                if ($targetIndex === null) {
+                    $remainingSourceIndexes[] = $sourceIndex;
+                    continue;
+                }
+                $exactlyMatchedTargetGrants[$targetIndex] = $remainingTargetGrants[$targetIndex];
+                $exactSourceGrantorByTargetIndex[$targetIndex] = $originalSourceGrantors[$sourceIndex];
+                unset($remainingTargetGrants[$targetIndex]);
+            }
+
+            /** @var array<int, string[]> $sourceGrantorsByTargetIndex */
+            $sourceGrantorsByTargetIndex = [];
+            foreach ($remainingSourceIndexes as $sourceIndex) {
+                $grant = $sourceGrants[$sourceIndex];
+                if ($grant['granted_on'] !== 'WAREHOUSE' || $grant['granted_by'] === $migrationRole) {
+                    continue;
+                }
+                $sourceGrantor = $originalSourceGrantors[$sourceIndex];
+                $acceptedGrant = ['granted_by' => $migrationRole] + $grant;
+                $targetIndex = $this->findSameGrantToRole($acceptedGrant, $remainingTargetGrants);
+                if ($targetIndex === null) {
+                    $targetIndex = $this->findSameGrantToRole($acceptedGrant, $exactlyMatchedTargetGrants);
+                    if ($targetIndex !== null && !isset($sourceGrantorsByTargetIndex[$targetIndex])) {
+                        $sourceGrantorsByTargetIndex[$targetIndex][] = $exactSourceGrantorByTargetIndex[$targetIndex];
+                    }
+                }
+                if ($targetIndex === null) {
+                    $this->logger->info(sprintf(
+                        'Warehouse grant "%s" granted by "%s" on the source has no matching grant on the target.',
+                        $name,
+                        $sourceGrantor,
+                    ));
+                    continue;
+                }
+                if (isset($sourceGrantorsByTargetIndex[$targetIndex])) {
+                    unset($sourceGrants[$sourceIndex]);
+                } else {
+                    $sourceGrants[$sourceIndex] = $acceptedGrant;
+                }
+                $sourceGrantorsByTargetIndex[$targetIndex][] = $sourceGrantor;
+                $this->acceptedWarehouseGrantsByMigrationRole++;
+            }
+
+            foreach ($sourceGrantorsByTargetIndex as $sourceGrantors) {
+                if (count($sourceGrantors) < 2) {
+                    continue;
+                }
+                sort($sourceGrantors);
+                $this->logger->info(sprintf(
+                    'Warehouse grant "%s" granted by %s on the source is one grant granted by "%s" on the target.',
+                    $name,
+                    implode(', ', array_map(fn(string $grantor) => sprintf('"%s"', $grantor), $sourceGrantors)),
+                    $migrationRole,
+                ));
+            }
+        }
+        return array_values($sourceGrants);
+    }
+
+    /**
+     * @param Row $grant
+     * @param array<int, Row> $candidates
+     */
+    private function findSameGrantToRole(array $grant, array $candidates): ?int
+    {
+        foreach ($candidates as $index => $candidate) {
+            foreach (self::GRANT_TO_ROLE_FIELDS as $field) {
+                if (($grant[$field] ?? null) !== ($candidate[$field] ?? null)) {
+                    continue 2;
+                }
+            }
+            return $index;
+        }
+        return null;
     }
 
     /**
@@ -451,13 +590,10 @@ class MigrationChecker
 
     private function existsOnTarget(string $database): bool
     {
-        /** @var array<int, Row> $databases */
-        $databases = $this->destinationConnection->fetchAll(sprintf(
+        $databases = Helper::filterRowsByExactName($this->destinationConnection->fetchAll(sprintf(
             'SHOW DATABASES LIKE %s',
             QueryBuilder::quote($database),
-        ));
-        // LIKE ignores case and treats "_" as a wildcard.
-        $databases = array_values(array_filter($databases, fn(array $row) => $row['name'] === $database));
+        )), $database);
         $this->comparison->compareItems(
             StructureComparison::GROUP_DATABASES,
             [['name' => $database]],
@@ -680,6 +816,12 @@ class MigrationChecker
                 $account,
             ));
         }
+        $this->logger->info(sprintf(
+            'Accepted %d warehouse grants recorded on the target as granted by the migration role "%s"'
+            . ' instead of the source grantor.',
+            $this->acceptedWarehouseGrantsByMigrationRole,
+            $this->config->getTargetSnowflakeRole(),
+        ));
 
         $differences = $this->comparison->getDifferences();
         if (!$differences) {

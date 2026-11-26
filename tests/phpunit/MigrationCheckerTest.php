@@ -266,6 +266,173 @@ class MigrationCheckerTest extends TestCase
             },
             'Post-migration check passed.',
         ];
+        yield 'warehouse grant recorded as granted by the migration role on the target' => [
+            function (FakeSnowflakeAccount $source, FakeSnowflakeAccount $target): void {
+                $source->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1',
+                );
+                $source->grantsToRole['KEBOOLA_1_RO'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1_RO',
+                    'false',
+                    'KEBOOLA_1',
+                );
+                $target->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1',
+                    'false',
+                    'TARGET_MAIN_MIGRATE',
+                );
+                $target->grantsToRole['KEBOOLA_1_RO'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1_RO',
+                    'false',
+                    'TARGET_MAIN_MIGRATE',
+                );
+            },
+            'Accepted 2 warehouse grants recorded on the target as granted by the migration role '
+                . '"TARGET_MAIN_MIGRATE" instead of the source grantor.',
+        ];
+        $exactWarehouseGrant = FakeSnowflakeAccount::grantToRole('USAGE', 'WAREHOUSE', 'WH', 'KEBOOLA_1');
+        $warehouseGrantByMigrationRole = FakeSnowflakeAccount::grantToRole(
+            'USAGE',
+            'WAREHOUSE',
+            'WH',
+            'KEBOOLA_1',
+            'false',
+            'TARGET_MAIN_MIGRATE',
+        );
+        foreach ([
+            'exact grant first' => [$exactWarehouseGrant, $warehouseGrantByMigrationRole],
+            'migration role grant first' => [$warehouseGrantByMigrationRole, $exactWarehouseGrant],
+        ] as $order => $targetWarehouseGrants) {
+            yield 'warehouse grants by two grantors, one granted by the migration role, ' . $order => [
+                function (
+                    FakeSnowflakeAccount $source,
+                    FakeSnowflakeAccount $target,
+                ) use ($targetWarehouseGrants): void {
+                    $source->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                        'USAGE',
+                        'WAREHOUSE',
+                        'WH',
+                        'KEBOOLA_1',
+                    );
+                    $source->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                        'USAGE',
+                        'WAREHOUSE',
+                        'WH',
+                        'KEBOOLA_1',
+                        'false',
+                        'KEBOOLA_1',
+                    );
+                    array_push($target->grantsToRole['KEBOOLA_1'], ...$targetWarehouseGrants);
+                },
+                'Accepted 1 warehouse grants recorded on the target as granted by the migration role '
+                    . '"TARGET_MAIN_MIGRATE" instead of the source grantor.',
+            ];
+        }
+        yield 'warehouse grants by two grantors collapsed into one grant by the migration role' => [
+            function (FakeSnowflakeAccount $source, FakeSnowflakeAccount $target): void {
+                $source->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1',
+                    'false',
+                    'KEBOOLA_1',
+                );
+                $source->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1',
+                );
+                $target->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1',
+                    'false',
+                    'TARGET_MAIN_MIGRATE',
+                );
+            },
+            'Warehouse grant "USAGE ON WAREHOUSE WH TO ROLE KEBOOLA_1" granted by "KEBOOLA_1", "KEBOOLA_STORAGE" '
+                . 'on the source is one grant granted by "TARGET_MAIN_MIGRATE" on the target.',
+        ];
+        yield 'warehouse grant collapsed into the grant by the migration role that matches ACCOUNTADMIN' => [
+            function (FakeSnowflakeAccount $source, FakeSnowflakeAccount $target): void {
+                $source->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1',
+                    'false',
+                    'ACCOUNTADMIN',
+                );
+                $source->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1',
+                    'false',
+                    'KEBOOLA_1',
+                );
+                $target->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1',
+                    'false',
+                    'TARGET_MAIN_MIGRATE',
+                );
+            },
+            'Warehouse grant "USAGE ON WAREHOUSE WH TO ROLE KEBOOLA_1" granted by "ACCOUNTADMIN", "KEBOOLA_1" '
+                . 'on the source is one grant granted by "TARGET_MAIN_MIGRATE" on the target.',
+        ];
+    }
+
+    public function testCollapsedWarehouseGrantsAreAllCountedAsAccepted(): void
+    {
+        $source = FakeSnowflakeAccount::keboolaProject('SOURCE_ACCOUNT');
+        $source->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+            'USAGE',
+            'WAREHOUSE',
+            'WH',
+            'KEBOOLA_1',
+        );
+        $source->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+            'USAGE',
+            'WAREHOUSE',
+            'WH',
+            'KEBOOLA_1',
+            'false',
+            'KEBOOLA_1',
+        );
+        $target = FakeSnowflakeAccount::keboolaProject('TARGET_ACCOUNT');
+        $target->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+            'USAGE',
+            'WAREHOUSE',
+            'WH',
+            'KEBOOLA_1',
+            'false',
+            'TARGET_MAIN_MIGRATE',
+        );
+
+        $this->runCheck($source, $target);
+
+        self::assertTrue($this->logger->hasInfoThatContains(
+            'Accepted 2 warehouse grants recorded on the target as granted by the migration role '
+            . '"TARGET_MAIN_MIGRATE" instead of the source grantor.',
+        ));
     }
 
     /**
@@ -380,6 +547,107 @@ class MigrationCheckerTest extends TestCase
             'Grants to roles "SELECT ON TABLE DB1.S1.T1 TO ROLE KEBOOLA_1_RO": '
                 . 'granted_by: KEBOOLA_STORAGE -> ACCOUNTADMIN',
         ];
+        yield 'warehouse grant granted by another role on the target' => [
+            function (FakeSnowflakeAccount $source, FakeSnowflakeAccount $target): void {
+                $source->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1',
+                );
+                $target->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1',
+                    'false',
+                    'SYSADMIN',
+                );
+            },
+            'Grants to roles "USAGE ON WAREHOUSE WH TO ROLE KEBOOLA_1": granted_by: KEBOOLA_STORAGE -> SYSADMIN',
+        ];
+        yield 'non-warehouse grant granted by the migration role on the target' => [
+            function (FakeSnowflakeAccount $source, FakeSnowflakeAccount $target): void {
+                $target->grantsToRole['KEBOOLA_1_RO'] = [
+                    FakeSnowflakeAccount::grantToRole(
+                        'SELECT',
+                        'TABLE',
+                        'DB1.S1.T1',
+                        'KEBOOLA_1_RO',
+                        'false',
+                        'TARGET_MAIN_MIGRATE',
+                    ),
+                ];
+            },
+            'Grants to roles "SELECT ON TABLE DB1.S1.T1 TO ROLE KEBOOLA_1_RO": '
+                . 'granted_by: KEBOOLA_STORAGE -> TARGET_MAIN_MIGRATE',
+        ];
+        yield 'warehouse grant granted by the migration role with a different grant option' => [
+            function (FakeSnowflakeAccount $source, FakeSnowflakeAccount $target): void {
+                $source->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1',
+                );
+                $target->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+                    'USAGE',
+                    'WAREHOUSE',
+                    'WH',
+                    'KEBOOLA_1',
+                    'true',
+                    'TARGET_MAIN_MIGRATE',
+                );
+            },
+            'Grants to roles "USAGE ON WAREHOUSE WH TO ROLE KEBOOLA_1": '
+                . 'grant_option: false -> true, granted_by: KEBOOLA_STORAGE -> TARGET_MAIN_MIGRATE',
+        ];
+    }
+
+    public function testWarehouseGrantWithoutGrantByMigrationRoleOnTargetIsReported(): void
+    {
+        $source = FakeSnowflakeAccount::keboolaProject('SOURCE_ACCOUNT');
+        $source->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+            'USAGE',
+            'WAREHOUSE',
+            'WH',
+            'KEBOOLA_1',
+            'false',
+            'SYSADMIN',
+        );
+        $source->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+            'USAGE',
+            'WAREHOUSE',
+            'WH',
+            'KEBOOLA_1',
+            'false',
+            'KEBOOLA_1',
+        );
+        $target = FakeSnowflakeAccount::keboolaProject('TARGET_ACCOUNT');
+        $target->grantsToRole['KEBOOLA_1'][] = FakeSnowflakeAccount::grantToRole(
+            'USAGE',
+            'WAREHOUSE',
+            'WH',
+            'KEBOOLA_1',
+            'false',
+            'SYSADMIN',
+        );
+        $expectedDifference = 'Grants to roles "USAGE ON WAREHOUSE WH TO ROLE KEBOOLA_1 #2": missing in target account';
+
+        try {
+            $this->runCheck($source, $target);
+            self::fail('UserException was expected.');
+        } catch (UserException $e) {
+            self::assertStringContainsString('- ' . $expectedDifference, $e->getMessage());
+        }
+        self::assertSame(['Post-migration check difference: ' . $expectedDifference], $this->getWarnings());
+        self::assertTrue($this->logger->hasInfoThatContains(
+            'Warehouse grant "USAGE ON WAREHOUSE WH TO ROLE KEBOOLA_1" granted by "KEBOOLA_1" on the source '
+            . 'has no matching grant on the target.',
+        ));
+        self::assertTrue($this->logger->hasInfoThatContains(
+            'Accepted 0 warehouse grants recorded on the target as granted by the migration role',
+        ));
     }
 
     public function testDatabaseObjectsAreListedWithTheProjectRoleOnBothAccounts(): void
