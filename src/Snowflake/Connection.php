@@ -40,7 +40,14 @@ class Connection extends AdapterConnection
     public function query(string $sql, array $bind = []): void
     {
         $this->assertQueryIsAllowed($sql);
+        $this->forgetSessionStateChangedBy($sql);
         parent::query($sql, $bind);
+    }
+
+    public function fetchAll(string $sql, array $bind = []): array
+    {
+        $this->forgetSessionStateChangedBy($sql);
+        return parent::fetchAll($sql, $bind);
     }
 
     /**
@@ -48,9 +55,19 @@ class Connection extends AdapterConnection
      */
     public function assertQueryIsAllowed(string $sql): void
     {
-        // The role is read from the server and not cached, because raw "USE ROLE" statements can change it.
         if (preg_match('/^\s*DROP/i', $sql) === 1 && $this->getCurrentRole() === 'ACCOUNTADMIN') {
             throw new UserException('Run DROP query on ACCOUNTADMIN role is not allowed.');
+        }
+    }
+
+    /**
+     * Raw statements (for example the "USE ROLE" list in Cleanup) bypass useRole(),
+     * so the tracked role is forgotten before they run, even if they then fail.
+     */
+    private function forgetSessionStateChangedBy(string $sql): void
+    {
+        if (preg_match('/^\s*(USE\s+(SECONDARY\s+)?ROLES?|REVOKE|DROP\s+ROLE)\b/i', $sql) === 1) {
+            $this->actualRole = null;
         }
     }
 
@@ -120,6 +137,10 @@ class Connection extends AdapterConnection
 
     public function getCurrentRole(): string
     {
+        // A quoted name like '"ROLE"' is not the form CURRENT_ROLE() returns, so it is not used.
+        if ($this->actualRole !== null && preg_match('/^".*"$/', $this->actualRole) !== 1) {
+            return $this->actualRole;
+        }
         $role = $this->fetchAll('SELECT CURRENT_ROLE() AS "role";');
 
         return $role[0]['role'];

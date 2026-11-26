@@ -6,9 +6,11 @@ namespace ProjectMigrationTool\Tests\Snowflake;
 
 use Generator;
 use Keboola\Component\UserException;
+use Keboola\SnowflakeDbAdapter\Exception\RuntimeException;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use ProjectMigrationTool\Snowflake\Connection;
+use ReflectionProperty;
 
 class ConnectionTest extends TestCase
 {
@@ -74,6 +76,111 @@ class ConnectionTest extends TestCase
         $this->expectExceptionMessage('Run DROP query on ACCOUNTADMIN role is not allowed.');
 
         $connection->query('  drop table x');
+    }
+
+    public function testCurrentRoleSetByUseRoleIsNotQueried(): void
+    {
+        $connection = $this->createConnectionWithServerRole(null, ['query']);
+        $connection->expects(self::once())->method('query')->with('USE ROLE "OWNER";');
+
+        $connection->useRole('OWNER');
+
+        self::assertSame('OWNER', $connection->getCurrentRole());
+    }
+
+    public function testCurrentRoleIsQueriedWhenNoRoleWasSet(): void
+    {
+        $connection = $this->createConnectionWithServerRole('SERVER_ROLE');
+
+        self::assertSame('SERVER_ROLE', $connection->getCurrentRole());
+    }
+
+    public function testCurrentRoleIsQueriedWhenRoleWasSetAsQuotedName(): void
+    {
+        $connection = $this->createConnectionWithServerRole('OWNER', ['query']);
+        $connection->expects(self::once())->method('query')->with('USE ROLE "OWNER";');
+
+        $connection->useRole('"OWNER"');
+
+        self::assertSame('OWNER', $connection->getCurrentRole());
+    }
+
+    public function testCurrentRoleIsQueriedAfterFailedUseRole(): void
+    {
+        $connection = $this->createConnectionWithServerRole('SERVER_ROLE');
+        $this->setTrackedRole($connection, 'OWNER');
+
+        try {
+            $connection->useRole('MISSING');
+            self::fail('USE ROLE must fail without a database connection.');
+        } catch (RuntimeException) {
+        }
+
+        self::assertSame('SERVER_ROLE', $connection->getCurrentRole());
+    }
+
+    /**
+     * @dataProvider statementChangingRoleProvider
+     */
+    public function testCurrentRoleIsQueriedAfterStatementThatCanChangeIt(string $sql): void
+    {
+        $connection = $this->createConnectionWithServerRole('SERVER_ROLE');
+        $this->setTrackedRole($connection, 'OWNER');
+
+        try {
+            $connection->query($sql);
+            self::fail('Query must fail without a database connection.');
+        } catch (RuntimeException) {
+        }
+
+        self::assertSame('SERVER_ROLE', $connection->getCurrentRole());
+    }
+
+    public static function statementChangingRoleProvider(): Generator
+    {
+        yield 'use role' => ['USE ROLE "OTHER";'];
+        yield 'use role lowercase with leading spaces' => ['  use role "OTHER";'];
+        yield 'use secondary roles' => ['USE SECONDARY ROLES ALL;'];
+        yield 'revoke role' => ['REVOKE ROLE "OWNER" FROM USER "U"'];
+        yield 'drop role' => ['DROP ROLE IF EXISTS "OWNER"'];
+    }
+
+    public function testDropOnTrackedAccountAdminRoleIsRejectedWithoutQuery(): void
+    {
+        $connection = $this->createConnectionWithServerRole(null);
+        $this->setTrackedRole($connection, 'ACCOUNTADMIN');
+
+        $this->expectException(UserException::class);
+        $this->expectExceptionMessage('Run DROP query on ACCOUNTADMIN role is not allowed.');
+
+        $connection->assertQueryIsAllowed('DROP TABLE x');
+    }
+
+    /**
+     * @param list<string> $mockedMethods
+     * @return Connection&MockObject
+     */
+    private function createConnectionWithServerRole(?string $serverRole, array $mockedMethods = []): Connection
+    {
+        $connection = $this->getMockBuilder(Connection::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['fetchAll', ...$mockedMethods])
+            ->getMock();
+        (new ReflectionProperty(Connection::class, 'defaultRole'))->setValue($connection, 'DEFAULT_ROLE');
+        if ($serverRole === null) {
+            $connection->expects(self::never())->method('fetchAll');
+        } else {
+            $connection->expects(self::once())
+                ->method('fetchAll')
+                ->with('SELECT CURRENT_ROLE() AS "role";')
+                ->willReturn([['role' => $serverRole]]);
+        }
+        return $connection;
+    }
+
+    private function setTrackedRole(Connection $connection, string $role): void
+    {
+        (new ReflectionProperty(Connection::class, 'actualRole'))->setValue($connection, $role);
     }
 
     /**
