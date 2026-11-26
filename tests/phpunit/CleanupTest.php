@@ -141,7 +141,10 @@ class CleanupTest extends TestCase
         );
         $cleanup->postMigration();
 
-        self::assertSame($expectedQueries, $queries);
+        self::assertSame(
+            [...$expectedQueries, sprintf('USE ROLE "%s";', self::TARGET_ROLE)],
+            $queries,
+        );
         foreach ($expectedInfo as $message) {
             self::assertTrue($this->logger->hasInfoThatContains($message), 'Missing info: ' . $message);
         }
