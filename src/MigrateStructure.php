@@ -927,17 +927,11 @@ SQL;
 
     private function databaseExistsOnTarget(string $database): bool
     {
-        // LIKE is case-insensitive and "_" matches any character, so compare the names exactly.
         $databases = $this->destinationConnection->fetchAll(sprintf(
             'SHOW DATABASES LIKE %s',
             QueryBuilder::quote($database),
         ));
-        foreach ($databases as $row) {
-            if ($row['name'] === $database) {
-                return true;
-            }
-        }
-        return false;
+        return Helper::filterRowsByExactName($databases, $database) !== [];
     }
 
     private function userExistsOnTarget(string $user): bool

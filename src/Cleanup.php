@@ -376,6 +376,7 @@ class Cleanup
                 ));
             }
         }
+        $this->destinationConnection->useRole($this->config->getTargetSnowflakeRole(), true);
     }
 
     /**
