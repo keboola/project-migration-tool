@@ -139,6 +139,21 @@ class ConnectionTest extends TestCase
         self::assertSame('SERVER_ROLE', $connection->getCurrentRole());
     }
 
+    public function testCurrentRoleIsQueriedAfterUseRoleSentThroughFetch(): void
+    {
+        $connection = $this->createConnectionWithServerRole('SERVER_ROLE');
+        $this->setTrackedRole($connection, 'OWNER');
+
+        try {
+            $connection->fetch('USE ROLE "OTHER";', [], function (): void {
+            });
+            self::fail('Query must fail without a database connection.');
+        } catch (RuntimeException) {
+        }
+
+        self::assertSame('SERVER_ROLE', $connection->getCurrentRole());
+    }
+
     public static function statementChangingRoleProvider(): Generator
     {
         yield 'use role' => ['USE ROLE "OTHER";'];

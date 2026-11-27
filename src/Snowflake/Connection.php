@@ -54,6 +54,12 @@ class Connection extends AdapterConnection
         return parent::fetchAll($sql, $bind);
     }
 
+    public function fetch(string $sql, array $bind, callable $callback): void
+    {
+        $this->forgetSessionStateChangedBy($sql);
+        parent::fetch($sql, $bind, $callback);
+    }
+
     /**
      * @internal Public only so tests can call it without an initialized adapter. Use query().
      */
