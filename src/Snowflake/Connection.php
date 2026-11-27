@@ -24,6 +24,10 @@ class Connection extends AdapterConnection
 
     private ?string $actualRole = null;
 
+    private ?string $actualWarehouse = null;
+
+    private ?string $warehouseRole = null;
+
     private string $defaultRole;
 
     private ?LoggerInterface $logger;
@@ -40,7 +44,20 @@ class Connection extends AdapterConnection
     public function query(string $sql, array $bind = []): void
     {
         $this->assertQueryIsAllowed($sql);
+        $this->forgetSessionStateChangedBy($sql);
         parent::query($sql, $bind);
+    }
+
+    public function fetchAll(string $sql, array $bind = []): array
+    {
+        $this->forgetSessionStateChangedBy($sql);
+        return parent::fetchAll($sql, $bind);
+    }
+
+    public function fetch(string $sql, array $bind, callable $callback): void
+    {
+        $this->forgetSessionStateChangedBy($sql);
+        parent::fetch($sql, $bind, $callback);
     }
 
     /**
@@ -48,9 +65,23 @@ class Connection extends AdapterConnection
      */
     public function assertQueryIsAllowed(string $sql): void
     {
-        // The role is read from the server and not cached, because raw "USE ROLE" statements can change it.
         if (preg_match('/^\s*DROP/i', $sql) === 1 && $this->getCurrentRole() === 'ACCOUNTADMIN') {
             throw new UserException('Run DROP query on ACCOUNTADMIN role is not allowed.');
+        }
+    }
+
+    /**
+     * Raw statements (for example the "USE ROLE" list in Cleanup) bypass useRole(),
+     * so the tracked role and warehouse are forgotten before they run, even if they then fail.
+     */
+    private function forgetSessionStateChangedBy(string $sql): void
+    {
+        if (preg_match('/^\s*(USE\s+(SECONDARY\s+)?ROLES?|REVOKE|DROP\s+ROLE)\b/i', $sql) === 1) {
+            $this->actualRole = null;
+        }
+        // CREATE WAREHOUSE also makes the new warehouse the current one of the session.
+        if (preg_match('/^\s*(USE|ALTER|DROP|CREATE(\s+OR\s+REPLACE)?)\s+WAREHOUSE\b/i', $sql) === 1) {
+            $this->actualWarehouse = null;
         }
     }
 
@@ -67,12 +98,26 @@ class Connection extends AdapterConnection
         $this->actualRole = $roleName;
     }
 
-    public function useWarehouse(string $warehouse): void
+    /**
+     * USE ROLE keeps the session warehouse, but the warehouse is set again after a role change,
+     * so a role without USAGE on it still fails here as before.
+     */
+    public function useWarehouse(string $warehouse, bool $forceUse = false): void
     {
+        if (!$forceUse
+            && $warehouse === $this->actualWarehouse
+            && $this->actualRole !== null
+            && $this->actualRole === $this->warehouseRole
+        ) {
+            return;
+        }
         $this->query(sprintf(
             'USE WAREHOUSE %s;',
             Helper::quoteIdentifier($warehouse)
         ));
+
+        $this->actualWarehouse = $warehouse;
+        $this->warehouseRole = $this->actualRole;
     }
 
     public function getRegion(): string
@@ -120,6 +165,10 @@ class Connection extends AdapterConnection
 
     public function getCurrentRole(): string
     {
+        // A quoted name like '"ROLE"' is not the form CURRENT_ROLE() returns, so it is not used.
+        if ($this->actualRole !== null && preg_match('/^".*"$/', $this->actualRole) !== 1) {
+            return $this->actualRole;
+        }
         $role = $this->fetchAll('SELECT CURRENT_ROLE() AS "role";');
 
         return $role[0]['role'];
