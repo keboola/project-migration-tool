@@ -225,6 +225,35 @@ class ConnectionTest extends TestCase
         yield 'use warehouse lowercase' => ['use warehouse "OTHER_WH";'];
         yield 'alter warehouse' => ['ALTER WAREHOUSE "WH" RENAME TO "WH2"'];
         yield 'drop warehouse' => ['DROP WAREHOUSE IF EXISTS "WH"'];
+        yield 'create warehouse' => ['CREATE WAREHOUSE "NEW_WH"'];
+        yield 'create warehouse if not exists' => ['CREATE WAREHOUSE IF NOT EXISTS "NEW_WH"'];
+        yield 'create or replace warehouse' => ['create or replace warehouse "NEW_WH"'];
+    }
+
+    /**
+     * @dataProvider statementKeepingWarehouseProvider
+     */
+    public function testWarehouseIsNotUsedAgainAfterUnrelatedStatement(string $sql): void
+    {
+        $connection = $this->createConnectionWithServerRole(null);
+        $this->setTrackedRole($connection, 'OWNER');
+        (new ReflectionProperty(Connection::class, 'actualWarehouse'))->setValue($connection, 'WH');
+        (new ReflectionProperty(Connection::class, 'warehouseRole'))->setValue($connection, 'OWNER');
+
+        try {
+            $connection->query($sql);
+            self::fail('Query must fail without a database connection.');
+        } catch (RuntimeException) {
+        }
+
+        $connection->useWarehouse('WH');
+        self::assertSame('WH', (new ReflectionProperty(Connection::class, 'actualWarehouse'))->getValue($connection));
+    }
+
+    public static function statementKeepingWarehouseProvider(): Generator
+    {
+        yield 'create table' => ['CREATE TABLE "DB"."S"."T" (id INT)'];
+        yield 'create role' => ['CREATE ROLE IF NOT EXISTS "R"'];
     }
 
     /**

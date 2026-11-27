@@ -73,7 +73,8 @@ class Connection extends AdapterConnection
         if (preg_match('/^\s*(USE\s+(SECONDARY\s+)?ROLES?|REVOKE|DROP\s+ROLE)\b/i', $sql) === 1) {
             $this->actualRole = null;
         }
-        if (preg_match('/^\s*(USE|ALTER|DROP)\s+WAREHOUSE\b/i', $sql) === 1) {
+        // CREATE WAREHOUSE also makes the new warehouse the current one of the session.
+        if (preg_match('/^\s*(USE|ALTER|DROP|CREATE(\s+OR\s+REPLACE)?)\s+WAREHOUSE\b/i', $sql) === 1) {
             $this->actualWarehouse = null;
         }
     }
