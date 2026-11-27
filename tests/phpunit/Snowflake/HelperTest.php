@@ -81,6 +81,40 @@ class HelperTest extends TestCase
             ],
             ['C_ROLE', 'B_ROLE', 'A_ROLE'],
         ];
+        yield 'empty list' => [[], []];
+        yield 'leaf roles of a cycle go first' => [
+            [
+                'A_ROLE' => 'B_ROLE',
+                'B_ROLE' => 'A_ROLE',
+                'LEAF_1' => 'A_ROLE',
+                'LEAF_2' => 'B_ROLE',
+            ],
+            ['LEAF_2', 'LEAF_1', 'B_ROLE', 'A_ROLE'],
+        ];
+    }
+
+    public function testOrderUserGrantsForRevokeWithRoleGrantedTwice(): void
+    {
+        $grants = array_map(
+            fn(array $grant) => GrantToUser::fromArray([
+                'role' => $grant[0],
+                'granted_to' => 'USER',
+                'grantee_name' => 'MIGRATE',
+                'granted_by' => $grant[1],
+            ]),
+            [
+                ['A_ROLE', 'A_ROLE'],
+                ['B_ROLE', 'A_ROLE'],
+                ['A_ROLE', 'MIGRATE_TARGET'],
+            ],
+        );
+
+        $ordered = array_map(
+            fn(GrantToUser $grant) => sprintf('%s BY %s', $grant->getRole(), $grant->getGrantedBy()),
+            Helper::orderUserGrantsForRevoke($grants),
+        );
+
+        self::assertSame(['B_ROLE BY A_ROLE', 'A_ROLE BY A_ROLE', 'A_ROLE BY MIGRATE_TARGET'], $ordered);
     }
 
     /**
